@@ -22,6 +22,7 @@ use horizon_core::{
     biome::BiomeZoom, geometry::Direction, position::BlockPos, random::position_seed,
 };
 use horizon_optifine::ctm::connect::{Axes as CtmAxes, Face as CtmFace};
+pub use horizon_terrain_data::{TILED_UV_STEPS, TerrainVertex, UV_STEPS};
 use horizon_world::{
     block_render::FaceVisibility,
     fluid::{FluidKind, FluidState},
@@ -56,113 +57,8 @@ pub const CULL_BACK: [i8; 4] = [0, 0, 0, 1];
 /// `Vertex::normal.w` of a shaded quad of an `entityCutoutCull` model (the bat): shaded by the
 /// normal like -127, and `entity.wgsl` also discards its back-facing pixels.
 pub const SHADED_CULL_W: i8 = -126;
-/// A section vertex: vanilla's `DefaultVertexFormat.BLOCK` (position, colour,
-/// UV0, UV2) with the sprite's array layer beside the light, in 24 bytes
-/// rather than vanilla's 28: the UV is fixed point, which holds model UVs
-/// (multiples of 1/16 and their halves) exactly. The position stays a float:
-/// fixed point would move the edges of offset plants and rotated elements by
-/// a fraction of a pixel. Terrain has no normal: `ModelBlockRenderer` bakes
-/// the face shade into the colour and `terrain.vsh` only multiplies it by the
-/// lightmap.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct TerrainVertex {
-    /// Section-relative position.
-    pub pos: [f32; 3],
-    /// UV within the sprite, `UV_STEPS` per unit (`TerrainVertex::new`,
-    /// `terrain.wgsl`'s `terrain_uv`).
-    pub(crate) uv: [u16; 2],
-    /// Sprite array layer, with `OPAQUE_LAYER` for opaque leaves and quads over opaque texels.
-    pub layer: u16,
-    /// Smooth light, 16x fixed point: sky in the low byte, block in the high one.
-    pub light: u16,
-    /// RGBA8: tint multiplied by directional shade and ambient occlusion.
-    pub color: u32,
-}
-/// `v.round().clamp(0.0, 65535.0) as u16`, without the `roundf` call x86-64's
-/// baseline instruction set makes of `f32::round`: clamped first (the same
-/// result), the fraction is exact below 2^23, and every float above is whole.
-#[inline]
-fn round_to_u16(v: f32) -> u16 {
-    let v = v.clamp(0.0, f32::from(u16::MAX));
-    let whole = v as u32;
-    (whole + u32::from(v - whole as f32 >= 0.5)) as u16
-}
-/// Fixed-point steps per unit of `TerrainVertex` UVs, which span `[0, 2)`.
-pub const UV_STEPS: f32 = 32768.0;
-/// Fixed-point steps per block of distant-terrain UVs (`TerrainVertex::tiled`),
-/// which span `[0, 2048)`: merged faces repeat their sprite once per block.
-pub const TILED_UV_STEPS: f32 = 32.0;
-impl TerrainVertex {
-    pub fn new(pos: [f32; 3], uv: [f32; 2], layer: u16, color: u32, light: u16) -> Self {
-        Self {
-            pos,
-            uv: uv.map(|v| round_to_u16(v * UV_STEPS)),
-            layer,
-            light,
-            color,
-        }
-    }
-    /// A vertex of a merged distant-terrain face, its UV in blocks from the
-    /// face's corner. Drawn with an instance UV scale of `1 / TILED_UV_STEPS`.
-    pub fn tiled(pos: [f32; 3], uv: [f32; 2], layer: u16, color: u32, light: u16) -> Self {
-        Self {
-            pos,
-            uv: uv.map(|v| round_to_u16(v * TILED_UV_STEPS)),
-            layer,
-            light,
-            color,
-        }
-    }
-    /// The UV the GPU samples.
-    pub fn uv(&self) -> [f32; 2] {
-        self.uv.map(|v| f32::from(v) / UV_STEPS)
-    }
-}
 #[cfg(test)]
 mod vertex_tests {
-    use super::TerrainVertex;
-    #[test]
-    fn model_uvs_pack_exactly() {
-        for i in 0..=32 {
-            let u = i as f32 / 32.0;
-            let v = TerrainVertex::new([0.0; 3], [u, 1.0 - u], 0, 0, 0);
-            assert_eq!(v.uv(), [u, 1.0 - u]);
-        }
-    }
-    #[test]
-    fn uv_rounding_matches_f32_round() {
-        let reference = |v: f32| v.round().clamp(0.0, f32::from(u16::MAX)) as u16;
-        let mut values = vec![
-            f32::NAN,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            -0.0,
-            0.5,
-            1.5,
-            65534.5,
-            1e9,
-        ];
-        for bits in (0..u32::MAX).step_by(9973) {
-            values.push(f32::from_bits(bits));
-        }
-        for i in 0..=140_000 {
-            values.push(i as f32 * 0.5 - 2.0);
-            values.push(i as f32 * 0.5 - 2.0 + f32::EPSILON);
-        }
-        for v in values {
-            assert_eq!(super::round_to_u16(v), reference(v), "{v:e}");
-        }
-    }
-    #[test]
-    fn other_uvs_round_within_a_step() {
-        // A flowing fluid's rotated UV.
-        let uv = [0.5 + 0.25 * 0.3f32.sin(), 0.5 - 0.25 * 0.3f32.cos()];
-        let packed = TerrainVertex::new([0.0; 3], uv, 0, 0, 0).uv();
-        for (a, b) in packed.iter().zip(uv) {
-            assert!((a - b).abs() <= 0.5 / 32768.0, "{a} {b}");
-        }
-    }
     #[test]
     fn emission_keeps_the_colour_and_the_free_bits() {
         let rgb = super::pack_rgb([0x12, 0x34, 0x56]);

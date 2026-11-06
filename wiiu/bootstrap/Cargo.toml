@@ -9,5 +9,6 @@ crate-type = ["staticlib"]
 
 [dependencies]
 horizon-core = { path = "../../crates/horizon-core", default-features = false, features = ["wiiu-core"] }
+horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
 
 [workspace]

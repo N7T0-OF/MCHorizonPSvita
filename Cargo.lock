@@ -1529,6 +1529,7 @@ dependencies = [
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-telemetry",
+ "horizon-terrain-data",
  "horizon-theme",
  "horizon-threads",
  "horizon-world",
@@ -1839,6 +1840,13 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "horizon-terrain-data"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]
