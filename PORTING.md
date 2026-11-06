@@ -9,7 +9,7 @@ Porting Horizon 26.3 to the Nintendo Wii U. Horizon source is kept at the reposi
 - Horizon's `horizon-client-render` crate owns the standard concrete `wgpu` renderer. The UWP reference added a `PresentationBackend` / `TerrainBackend` seam and a separate D3D11 renderer that consumes CPU `Frame`/`SectionMesh` data. Reuse that seam design for GX2; implement GX2-specific shaders, buffers, texture atlases, depth state and draw submission rather than calling `wgpu` or copying D3D11 code.
 - The old `rust-wiiu/wut` Rust crate was archived on 2026-02-20. The current rust-wiiu organization is experimental, Linux-only, and has moved to `cafe-sys`, `cafe-target-spec`, a Rust fork, and `cargo-wiiu`. Book for U warns that its guide is being rewritten.
 - WSL Ubuntu has upstream Rust nightly, `cargo-wiiu` 0.4.1, and the official devkitPro WUT `wiiu-dev` package. The project builds a Rust `no_std` static library, initializes WUT/GX2 for TV and GamePad, and packages RPX/WUHB. Horizon's `horizon-core` has a `wiiu-core` feature that compiles its existing `BlockPos`/`SectionPos`/`ChunkPos` types without `std`; a new `horizon-terrain-data` crate shares the exact 24-byte `TerrainVertex` format between the desktop mesher and Wii U adapter without `std`. Rust generates a projected 3×3, 15-block heightmap fixture with exposed-face culling into four-vertex quads using Horizon's vertex type. A separate adapter expands those quads to GX2 triangle lists and converts fixed-point UVs and packed RGBA color to the GX2 float vertex layout. The current shader ignores sprite layer and light and samples an original 8×8 RGBA atlas with point filtering. GX2 depth testing is enabled for the TV and GamePad contexts. The left stick and D-pad pan this test scene by rebuilding its small vertex buffer only when the camera moves.
-- The adapter can also consume actual `SectionMesh::solid` vertices from Horizon's existing render capture. `tools/horizon_wiiu_capture.py` selects the nearest nonempty solid section, decodes the host-endian 24-byte records, and emits target-compiled C constants with a camera-relative section origin. Set `HORIZON_WIIU_CAPTURE_DIR` when building to use it; this keeps `horizon-client-render` and its desktop `wgpu`/`winit` dependencies out of the Wii U executable. The optional path was cross-built and run in Cemu with a synthetic capture; a real game capture has not yet been produced. Sprite-layer mapping and lighting remain unsupported by the bootstrap shader.
+- The adapter consumes actual `SectionMesh::solid` vertices from Horizon's render capture. `tools/horizon_wiiu_capture.py` selects the nearest nonempty solid section, decodes the host-endian 24-byte records, and emits target-compiled C constants with a camera-relative section origin. A fresh Horizon 26.3 creative world produced a capture containing 1,176 resident sections and 30,771,936 vertex bytes. The converter selected section `(-3, 9, 0)` with 7,152 solid vertices. The capture-fed RPX built successfully and Cemu 2.6 loaded its module and ran the title (checksum `0xa423e4a7`). This verifies real Horizon mesh conversion, cross-compilation, packaging, and RPX startup; it does not verify visual fidelity on hardware. The current shader still substitutes a procedural texture and ignores sprite layers, lighting, translucency, and captured yaw/pitch.
 
 ## Build and emulator results
 
@@ -31,7 +31,7 @@ CARGO_TARGET_DIR=/tmp/horizonwiiu-host-tests-final cargo +nightly test \
   --lib --jobs "$(nproc)"
 ```
 
-The capture converter host tests passed with:
+The capture converter host tests passed (3/3) with:
 
 ```sh
 python -m unittest tests.test_horizon_wiiu_capture -v
@@ -45,13 +45,24 @@ HORIZON_WIIU_BUILD_DIR=/tmp/horizonwiiu-captured-section \
   bash build.sh
 ```
 
+The verified real-capture build used WSL Ubuntu and the capture from a scratch Horizon world:
+
+```sh
+HORIZON_WIIU_CAPTURE_DIR=/tmp/horizonwiiu-horizon-capture \
+HORIZON_WIIU_BUILD_DIR=/tmp/horizonwiiu-real-horizon \
+CAFEGLSL_ROOT=/tmp/horizonwiiu-triangle/deps/cafeglsl-1.0.0-rc1-linux-x86_64 \
+  bash build.sh
+```
+
+To make another capture, run Horizon with isolated data directories and the prepared 26.3 resources, then use `horizon-ctl render-capture on` followed by `horizon-ctl render-capture DIR`. WSLg needs its normal `XDG_RUNTIME_DIR` for the Wayland socket; keep the game, launcher, and XDG data/config directories in scratch locations. `docs/graphics.md` describes the capture contents.
+
 To launch the RPX from PowerShell with the tested portable Cemu build:
 
 ```powershell
-& "$env:TEMP\HorizonWiiU-Cemu-v2.6\Cemu_2.6\Cemu.exe" -g "\\wsl.localhost\Ubuntu\tmp\horizonwiiu-section-adapter\horizon_wiiu_bootstrap.rpx"
+& "$env:TEMP\HorizonWiiU-Cemu-v2.6\Cemu_2.6\Cemu.exe" -g "\\wsl.localhost\Ubuntu\tmp\horizonwiiu-real-horizon\horizon_wiiu_bootstrap.rpx"
 ```
 
-Build directory: `/tmp/horizonwiiu-capture-adapter` for the optional capture path and `/tmp/horizonwiiu-section-adapter` for the default fixture. Both produced an ELF32 big-endian PowerPC executable, RPX, and WUHB. Cemu 2.6 was fetched from the [official Cemu release](https://github.com/cemu-project/Cemu/releases) as a portable build and launched with `-g` against the capture-fed RPX. This run used a synthetic one-quad capture to verify the import/build path; it was not a real Horizon world capture. Cemu's fresh `portable/log.txt` records `Loaded module 'horizon_wiiu_bootstrap'` (checksum `0xf6803030`) followed by `Run title`, and its GamePad View title reported about 60 FPS. The initial textured block build was visually inspected, but the latest capture-fed mesh has not had a screenshot-based visual check. GamePad movement has not been exercised: the portable Cemu profile has no input device assigned. This is not a console test. Cemu reports three RPLLoader section-size warnings (sections 11, 16, and 17), with no launch failure. The CafeGLSL auto-download path was separately exercised and verified its published SHA-256. Without `CAFEGLSL_ROOT`, `build.sh` downloads and verifies the compiler automatically.
+Build directory: `/tmp/horizonwiiu-real-horizon` for the real Horizon capture and `/tmp/horizonwiiu-section-adapter` for the procedural fixture. Both produced an ELF32 big-endian PowerPC executable, RPX, and WUHB. The portable Cemu 2.6 build was launched with `-g` against the real-capture RPX. Its fresh `portable/log.txt` records `Loaded module 'horizon_wiiu_bootstrap'` (checksum `0xa423e4a7`) followed by `Run title`; the Cemu process remained live after launch. The log reports three RPLLoader section-size warnings (sections 11, 16, and 17), with no launch failure. This verifies RPX loading and title startup, not a screenshot-based visual check or a console run. Cemu GamePad input is not configured. The CafeGLSL auto-download path was separately exercised and verified its published SHA-256. Without `CAFEGLSL_ROOT`, `build.sh` downloads and verifies the compiler automatically.
 
 ## Architecture decisions
 
@@ -62,7 +73,7 @@ Build directory: `/tmp/horizonwiiu-capture-adapter` for the optional capture pat
 
 ## Next steps
 
-1. Prepare the local pinned 26.3 resources, produce a real Horizon render capture, and run the capture-fed RPX in Cemu; then add GX2 sprite-layer atlas and lighting support.
-2. Verify D-pad/stick pan input in Cemu with a configured GamePad device, then add a perspective camera and GamePad movement.
+1. Add a GX2 sprite-layer atlas and light sampling for the captured Horizon mesh.
+2. Add captured yaw/pitch and perspective camera movement, then verify D-pad/stick input in Cemu.
 3. Expand the `horizon-core` embedded feature and integrate portable world generation behind Wii U platform interfaces.
 4. Run each packaged increment in Cemu and on hardware when available; report Cemu results separately from console results.
