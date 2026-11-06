@@ -80,6 +80,9 @@ extern void horizon_wiiu_camera_motion(float yaw_degrees,
                                        float forward,
                                        float strafe,
                                        float output[2]);
+extern void horizon_wiiu_camera_ray(float yaw_degrees,
+                                    float pitch_degrees,
+                                    float output[3]);
 extern void horizon_wiiu_player_vertical_step(float eyeY,
                                               float verticalVelocity,
                                               float groundEyeY,
@@ -106,6 +109,15 @@ extern const uint8_t *horizon_wiiu_world_terrain_atlas(void);
 extern int32_t horizon_wiiu_world_chunk_heights(const void *chunk, int16_t *heights,
                                                 uint32_t capacity);
 extern int32_t horizon_wiiu_world_chunk_position(const void *chunk, int32_t output[2]);
+extern int32_t horizon_wiiu_world_raycast(const void *chunk, const float origin[3],
+                                          const float direction[3], float maxDistance,
+                                          int32_t hit[6]);
+extern int32_t horizon_wiiu_world_set_block(void *chunk, int32_t x, int32_t y,
+                                             int32_t z, uint32_t state);
+extern uint32_t horizon_wiiu_world_placement_state(void);
+extern int32_t horizon_wiiu_world_player_clear(const void *chunk, float centerX,
+                                                float eyeY, float centerZ,
+                                                float halfWidth, float height);
 extern void horizon_wiiu_world_free_chunk(void *chunk);
 #define HORIZON_WIIU_RESOURCE_PATH "/vol/external01/wiiu/apps/HorizonWiiU/resources/26.3"
 #endif
@@ -149,6 +161,9 @@ static uint32_t sBlockVertexCount;
 #ifdef HORIZON_WIIU_WORLDGEN
 static int sBlockInitFailure;
 static uint32_t sRegionReloadCooldown;
+static uint32_t sPlacementState;
+static BOOL sBreakButtonWasHeld;
+static BOOL sPlaceButtonWasHeld;
 #if HORIZON_WIIU_WORLD_REGION_RADIUS > 0
 static BOOL sRegionLoadPending;
 static int32_t sPendingRegionCenterX;
@@ -452,6 +467,7 @@ init_block_mesh(void)
    sCameraY = (float)sGroundHeights[
       localZ * HORIZON_WIIU_WORLD_REGION_DIAMETER + localX] + 1.62f;
    sCameraPitch = 8.0f;
+   sPlacementState = horizon_wiiu_world_placement_state();
    OSReport("HorizonWiiU: generated Horizon region at (%d,%d), %u vertices, spawn (%d,%d)\n",
             regionOrigin[0], regionOrigin[1], sBlockSectionVertexCount, spawn[0], spawn[1]);
 #else
@@ -653,6 +669,106 @@ stream_runtime_world_region(void)
 }
 #endif
 
+#if defined(HORIZON_WIIU_WORLDGEN) && !defined(HORIZON_WIIU_CAPTURE)
+static BOOL
+refresh_edited_world_chunk(void)
+{
+   uint32_t vertexCount = 0;
+   const HorizonTerrainVertex *vertices = horizon_wiiu_world_chunk_vertices(
+      sRuntimeWorldChunk, &vertexCount);
+   int16_t heights[HORIZON_WIIU_WORLD_GROUND_HEIGHT_COUNT];
+   if (!vertices || (vertexCount % 4) != 0
+       || !horizon_wiiu_world_chunk_heights(
+          sRuntimeWorldChunk, heights, HORIZON_WIIU_WORLD_GROUND_HEIGHT_COUNT)
+       || vertexCount / 4 > UINT32_MAX / 6) {
+      OSReport("HorizonWiiU: edited region returned invalid mesh data\n");
+      return FALSE;
+   }
+
+   const uint32_t requiredCapacity = vertexCount / 4 * 6;
+   if (requiredCapacity > sBlockBuffer.elemCount) {
+      GX2RBuffer replacement = {0};
+      replacement.flags = sBlockBuffer.flags;
+      replacement.elemSize = sizeof(Vertex);
+      replacement.elemCount = requiredCapacity;
+      if (!GX2RCreateBuffer(&replacement)) {
+         OSReport("HorizonWiiU: could not grow terrain buffer after block edit\n");
+         sBlockSection = vertices;
+         sBlockSectionVertexCount = vertexCount;
+         memcpy(sGroundHeights, heights, sizeof(sGroundHeights));
+         sBlockMeshDirty = TRUE;
+         return FALSE;
+      }
+      GX2DrawDone();
+      GX2RDestroyBufferEx(&sBlockBuffer, sBlockBuffer.flags);
+      sBlockBuffer = replacement;
+      sBlockOutputCapacity = requiredCapacity;
+   }
+
+   sBlockSection = vertices;
+   sBlockSectionVertexCount = vertexCount;
+   memcpy(sGroundHeights, heights, sizeof(sGroundHeights));
+   sBlockMeshDirty = TRUE;
+   return TRUE;
+}
+
+static BOOL
+world_player_clear(float x, float eyeY, float z)
+{
+   return horizon_wiiu_world_player_clear(
+      sRuntimeWorldChunk, x, eyeY, z, 0.30f, 1.80f) != 0;
+}
+
+static void
+interact_with_world(const VPADStatus *status)
+{
+   const BOOL breakHeld = (status->hold & VPAD_BUTTON_X) != 0;
+   const BOOL placeHeld = (status->hold & VPAD_BUTTON_Y) != 0;
+   const BOOL breakPressed = breakHeld && !sBreakButtonWasHeld;
+   const BOOL placePressed = placeHeld && !sPlaceButtonWasHeld;
+   sBreakButtonWasHeld = breakHeld;
+   sPlaceButtonWasHeld = placeHeld;
+   if (!breakPressed && !placePressed) {
+      return;
+   }
+
+   const float origin[3] = {sCameraX, sCameraY, sCameraZ};
+   float direction[3];
+   int32_t hit[6];
+   horizon_wiiu_camera_ray(sCameraYaw, sCameraPitch, direction);
+   if (!horizon_wiiu_world_raycast(
+          sRuntimeWorldChunk, origin, direction, 5.0f, hit)) {
+      return;
+   }
+
+   int32_t x = hit[0];
+   int32_t y = hit[1];
+   int32_t z = hit[2];
+   uint32_t state = 0;
+   if (placePressed) {
+      x = hit[3];
+      y = hit[4];
+      z = hit[5];
+      if (!world_player_clear(sCameraX, sCameraY, sCameraZ)
+          || ((float)x + 1.0f > sCameraX - 0.30f
+              && (float)x < sCameraX + 0.30f
+              && (float)y + 1.0f > sCameraY - 1.62f
+              && (float)y < sCameraY + 0.18f
+              && (float)z + 1.0f > sCameraZ - 0.30f
+              && (float)z < sCameraZ + 0.30f)) {
+         return;
+      }
+      state = sPlacementState;
+   }
+
+   if (horizon_wiiu_world_set_block(sRuntimeWorldChunk, x, y, z, state) > 0
+       && refresh_edited_world_chunk()) {
+      OSReport("HorizonWiiU: %s block at %d,%d,%d\n",
+               placePressed ? "placed" : "broke", x, y, z);
+   }
+}
+#endif
+
 static void
 update_camera(void)
 {
@@ -737,6 +853,24 @@ update_camera(void)
       candidateCameraX = sCameraX;
       candidateCameraZ = sCameraZ;
    }
+   if (grounded) {
+      const float moveEyeY = candidateCameraX == sCameraX
+                                && candidateCameraZ == sCameraZ
+                             ? currentGroundEyeY : candidateGroundEyeY;
+      if (!world_player_clear(candidateCameraX, moveEyeY, sCameraZ)) {
+         candidateCameraX = sCameraX;
+      }
+      if (!world_player_clear(candidateCameraX, moveEyeY, candidateCameraZ)) {
+         candidateCameraZ = sCameraZ;
+      }
+   } else {
+      if (!world_player_clear(candidateCameraX, sCameraY, sCameraZ)) {
+         candidateCameraX = sCameraX;
+      }
+      if (!world_player_clear(candidateCameraX, sCameraY, candidateCameraZ)) {
+         candidateCameraZ = sCameraZ;
+      }
+   }
    sCameraX = candidateCameraX;
    sCameraZ = candidateCameraZ;
    stream_runtime_world_region();
@@ -775,8 +909,17 @@ update_camera(void)
    float verticalState[2] = {sCameraY, sPlayerVerticalVelocity};
    horizon_wiiu_player_vertical_step(sCameraY, sPlayerVerticalVelocity,
                                      groundEyeY, jumpPressed, verticalState);
+#ifdef HORIZON_WIIU_WORLDGEN
+   if (!world_player_clear(sCameraX, verticalState[0], sCameraZ)) {
+      verticalState[0] = verticalState[0] > sCameraY ? sCameraY : groundEyeY;
+      verticalState[1] = 0.0f;
+   }
+#endif
    sCameraY = verticalState[0];
    sPlayerVerticalVelocity = verticalState[1];
+#ifdef HORIZON_WIIU_WORLDGEN
+   interact_with_world(&status);
+#endif
 #endif
    if (sCameraX != previousCameraX || sCameraZ != previousCameraZ
        || sCameraY != previousCameraY || sCameraYaw != previousCameraYaw

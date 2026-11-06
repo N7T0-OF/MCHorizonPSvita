@@ -230,6 +230,28 @@ pub extern "C" fn horizon_wiiu_camera_motion(
     }
 }
 
+fn camera_ray(yaw_degrees: f32, pitch_degrees: f32) -> [f32; 3] {
+    let yaw = yaw_degrees * DEGREES_TO_RADIANS;
+    let pitch = pitch_degrees * DEGREES_TO_RADIANS;
+    let cos_pitch = libm::cosf(pitch);
+    [
+        -libm::sinf(yaw) * cos_pitch,
+        -libm::sinf(pitch),
+        libm::cosf(yaw) * cos_pitch,
+    ]
+}
+
+/// Resolves the center-of-screen view ray in Minecraft world coordinates.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_camera_ray(yaw_degrees: f32, pitch_degrees: f32, output: *mut f32) {
+    if output.is_null() || !yaw_degrees.is_finite() || !pitch_degrees.is_finite() {
+        return;
+    }
+    let ray = camera_ray(yaw_degrees, pitch_degrees);
+    // SAFETY: C provides three writable float outputs.
+    unsafe { core::ptr::copy_nonoverlapping(ray.as_ptr(), output, ray.len()) };
+}
+
 fn player_vertical_step(
     eye_y: f32,
     vertical_velocity: f32,
@@ -327,7 +349,7 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 #[cfg(all(test, feature = "runtime-demo"))]
 mod tests {
     use super::{
-        horizon_wiiu_build_runtime_chunk, horizon_wiiu_camera_motion,
+        camera_ray, horizon_wiiu_build_runtime_chunk, horizon_wiiu_camera_motion,
         horizon_wiiu_encode_terrain_quads, player_can_step_up, player_vertical_step,
         project_position, terrain_light_uv, Camera, GX2_VERTEX_SCALARS, PLAYER_JUMP_SPEED,
         WORLD_TRIANGLE_CAPACITY, WORLD_VERTEX_CAPACITY,
@@ -434,6 +456,22 @@ mod tests {
         horizon_wiiu_camera_motion(90.0, 0.0, 1.0, motion.as_mut_ptr());
         assert!(motion[0].abs() < 0.00001);
         assert!((motion[1] + 1.0).abs() < 0.00001);
+    }
+
+    #[test]
+    fn camera_ray_matches_game_yaw_and_pitch_conventions() {
+        let forward = camera_ray(0.0, 0.0);
+        assert!(forward[0].abs() < 0.00001);
+        assert!(forward[1].abs() < 0.00001);
+        assert!((forward[2] - 1.0).abs() < 0.00001);
+
+        let turned = camera_ray(90.0, 0.0);
+        assert!((turned[0] + 1.0).abs() < 0.00001);
+        assert!(turned[2].abs() < 0.00001);
+
+        let pitched = camera_ray(0.0, 30.0);
+        assert!(pitched[1] < 0.0);
+        assert!((pitched[2] - 0.866_025_4).abs() < 0.00001);
     }
 
     #[test]
