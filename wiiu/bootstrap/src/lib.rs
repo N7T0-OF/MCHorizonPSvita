@@ -48,7 +48,7 @@ fn write_gx2_vertex(
     camera_z: f32,
 ) {
     let x = section_origin[0] + terrain_vertex.pos[0] - camera_x;
-    let y = section_origin[1] + terrain_vertex.pos[1] - BASE_Y as f32;
+    let y = section_origin[1] + terrain_vertex.pos[1];
     let z = section_origin[2] + terrain_vertex.pos[2] - camera_z;
     // Dimetric projection keeps the test world inside clip space and makes
     // horizontal GamePad movement easy to see without a matrix dependency.
@@ -186,6 +186,7 @@ pub extern "C" fn horizon_wiiu_build_block_section(
 /// Converts Horizon's four-vertex terrain quads to GX2's triangle-list layout.
 ///
 /// The source can be `SectionMesh::solid` in Horizon's 24-byte vertex format.
+/// `section_x/y/z` is the section origin relative to the captured camera.
 /// Sprite layers and light are retained in that format but are not sampled by
 /// this bootstrap's single procedural texture shader yet.
 #[unsafe(no_mangle)]
@@ -290,7 +291,7 @@ mod tests {
             output.as_mut_ptr(),
             BLOCK_VERTEX_COUNT,
             -1.0,
-            64.0,
+            0.0,
             -1.0,
             0.0,
             0.0,
@@ -318,7 +319,7 @@ mod tests {
                 output.as_mut_ptr(),
                 6,
                 0.0,
-                64.0,
+                0.0,
                 0.0,
                 0.0,
                 0.0,
@@ -332,7 +333,7 @@ mod tests {
                 output.as_mut_ptr(),
                 5,
                 0.0,
-                64.0,
+                0.0,
                 0.0,
                 0.0,
                 0.0,

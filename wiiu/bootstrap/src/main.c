@@ -51,12 +51,23 @@ extern uint32_t horizon_wiiu_encode_terrain_quads(const HorizonTerrainVertex *so
                                                    float camera_x,
                                                    float camera_z);
 
+#ifdef HORIZON_WIIU_CAPTURE
+extern const HorizonTerrainVertex horizon_wiiu_capture_vertices[];
+extern const uint32_t horizon_wiiu_capture_vertex_count;
+extern const float horizon_wiiu_capture_section_origin[3];
+#endif
+
 static WHBGfxShaderGroup sBlockShader;
 static GX2RBuffer sBlockBuffer;
 static GX2Texture sBlockAtlas;
 static GX2Sampler sBlockSampler;
-static HorizonTerrainVertex sBlockSection[SECTION_VERTEX_COUNT];
+static const HorizonTerrainVertex *sBlockSection;
+#ifndef HORIZON_WIIU_CAPTURE
+static HorizonTerrainVertex sFixtureSection[SECTION_VERTEX_COUNT];
+#endif
+static float sSectionOrigin[3];
 static uint32_t sBlockSectionVertexCount;
+static uint32_t sBlockOutputCapacity;
 static uint32_t sBlockVertexCount;
 static float sCameraX;
 static float sCameraZ;
@@ -167,22 +178,42 @@ init_block_mesh(void)
       return FALSE;
    }
 
+#ifdef HORIZON_WIIU_CAPTURE
+   sBlockSection = horizon_wiiu_capture_vertices;
+   sBlockSectionVertexCount = horizon_wiiu_capture_vertex_count;
+   memcpy(sSectionOrigin, horizon_wiiu_capture_section_origin, sizeof(sSectionOrigin));
+   if (!sBlockSection || sBlockSectionVertexCount == 0 || sBlockSectionVertexCount % 4 != 0) {
+      WHBGfxFreeShaderGroup(&sBlockShader);
+      return FALSE;
+   }
+   sBlockOutputCapacity = sBlockSectionVertexCount / 4 * 6;
+#else
+   sBlockSection = sFixtureSection;
+   sSectionOrigin[0] = -1.0f;
+   sSectionOrigin[1] = 0.0f;
+   sSectionOrigin[2] = -1.0f;
+   sBlockSectionVertexCount = horizon_wiiu_build_block_section(sFixtureSection,
+                                                                SECTION_VERTEX_COUNT);
+   if (sBlockSectionVertexCount == 0 || sBlockSectionVertexCount > SECTION_VERTEX_COUNT) {
+      WHBGfxFreeShaderGroup(&sBlockShader);
+      return FALSE;
+   }
+   sBlockOutputCapacity = BLOCK_VERTEX_COUNT;
+#endif
+
+   if (sBlockOutputCapacity == 0 || sBlockOutputCapacity > UINT32_MAX / sizeof(Vertex)) {
+      WHBGfxFreeShaderGroup(&sBlockShader);
+      return FALSE;
+   }
+
    sBlockBuffer.flags = GX2R_RESOURCE_BIND_VERTEX_BUFFER
                         | GX2R_RESOURCE_USAGE_CPU_READ
                         | GX2R_RESOURCE_USAGE_CPU_WRITE
                         | GX2R_RESOURCE_USAGE_GPU_READ;
    sBlockBuffer.elemSize = sizeof(Vertex);
-   sBlockBuffer.elemCount = BLOCK_VERTEX_COUNT;
+   sBlockBuffer.elemCount = sBlockOutputCapacity;
 
    if (!GX2RCreateBuffer(&sBlockBuffer)) {
-      WHBGfxFreeShaderGroup(&sBlockShader);
-      return FALSE;
-   }
-
-   sBlockSectionVertexCount = horizon_wiiu_build_block_section(sBlockSection,
-                                                                SECTION_VERTEX_COUNT);
-   if (sBlockSectionVertexCount == 0 || sBlockSectionVertexCount > SECTION_VERTEX_COUNT) {
-      GX2RDestroyBufferEx(&sBlockBuffer, sBlockBuffer.flags);
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
    }
@@ -241,14 +272,14 @@ update_block_mesh(void)
    uint32_t vertexCount = horizon_wiiu_encode_terrain_quads(sBlockSection,
                                                              sBlockSectionVertexCount,
                                                              (float *)buffer,
-                                                             BLOCK_VERTEX_COUNT,
-                                                             -1.0f,
-                                                             64.0f,
-                                                             -1.0f,
+                                                             sBlockOutputCapacity,
+                                                             sSectionOrigin[0],
+                                                             sSectionOrigin[1],
+                                                             sSectionOrigin[2],
                                                              sCameraX,
                                                              sCameraZ);
    GX2RUnlockBufferEx(&sBlockBuffer, 0);
-   if (vertexCount == 0 || vertexCount > BLOCK_VERTEX_COUNT) {
+   if (vertexCount == 0 || vertexCount > sBlockOutputCapacity) {
       return FALSE;
    }
 

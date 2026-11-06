@@ -4,6 +4,8 @@ project(horizon_wiiu_bootstrap C)
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 find_program(POWERPC_OBJCOPY_EXECUTABLE powerpc-eabi-objcopy REQUIRED)
 find_program(CAFEGLSL_COMPILER_EXECUTABLE glslcompiler REQUIRED)
+set(HORIZON_WIIU_CAPTURE_DIR "" CACHE PATH "Horizon render-capture directory; empty uses the fixture scene")
+set(HORIZON_WIIU_CAPTURE_MAX_VERTICES 65536 CACHE STRING "Largest solid section accepted from a render capture")
 
 set(RUST_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rust-target")
 set(RUST_TARGET_NAME "powerpc-cafe-nintendo")
@@ -59,7 +61,31 @@ add_custom_command(
 set_source_files_properties("${GSH_OBJECT}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
 add_custom_target(horizon_wiiu_shaders DEPENDS "${GSH_OBJECT}")
 
-add_executable(horizon_wiiu_bootstrap src/main.c "${GSH_OBJECT}")
+set(HORIZON_WIIU_CAPTURE_SOURCE "")
+if(HORIZON_WIIU_CAPTURE_DIR)
+   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+   set(HORIZON_WIIU_CAPTURE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/horizon_wiiu_capture.c")
+   add_custom_command(
+      OUTPUT "${HORIZON_WIIU_CAPTURE_SOURCE}"
+      COMMAND "${Python3_EXECUTABLE}"
+         "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/horizon_wiiu_capture.py"
+         "${HORIZON_WIIU_CAPTURE_DIR}"
+         --output "${HORIZON_WIIU_CAPTURE_SOURCE}"
+         --max-vertices "${HORIZON_WIIU_CAPTURE_MAX_VERTICES}"
+      DEPENDS
+         "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/horizon_wiiu_capture.py"
+         "${HORIZON_WIIU_CAPTURE_DIR}/scene.json"
+         "${HORIZON_WIIU_CAPTURE_DIR}/sections.json"
+         "${HORIZON_WIIU_CAPTURE_DIR}/sections.bin"
+      COMMENT "Converting a captured Horizon section for GX2"
+      VERBATIM
+   )
+endif()
+
+add_executable(horizon_wiiu_bootstrap src/main.c "${GSH_OBJECT}" "${HORIZON_WIIU_CAPTURE_SOURCE}")
+if(HORIZON_WIIU_CAPTURE_SOURCE)
+   target_compile_definitions(horizon_wiiu_bootstrap PRIVATE HORIZON_WIIU_CAPTURE=1)
+endif()
 add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_rust)
 add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_shaders)
 target_link_libraries(horizon_wiiu_bootstrap PRIVATE horizon_wiiu_rustlib)

@@ -38,6 +38,8 @@ fi
 export PATH="${CAFEGLSL_ROOT}/bin:${PATH}"
 powerpc-eabi-cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" -G Ninja \
    -DCMAKE_BUILD_TYPE=Release \
+   -DHORIZON_WIIU_CAPTURE_DIR="${HORIZON_WIIU_CAPTURE_DIR:-}" \
+   -DHORIZON_WIIU_CAPTURE_MAX_VERTICES="${HORIZON_WIIU_CAPTURE_MAX_VERTICES:-65536}" \
    -DCAFEGLSL_COMPILER_EXECUTABLE="${CAFEGLSL_ROOT}/bin/glslcompiler"
 cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 
