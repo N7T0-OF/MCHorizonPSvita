@@ -1,9 +1,9 @@
 //! CafeOS bridge from Horizon's real 26.3 proto-chunks to the GX2 renderer.
 //!
 //! The renderer receives the same shared `TerrainVertex` ABI used by Horizon's
-//! desktop client. Block shapes and atlas selection are intentionally simple
-//! in this first bridge; the chunk states, registry, seed, height and terrain
-//! all come from `horizon-world`'s production OverworldGenerator.
+//! desktop client. Block shape selection is intentionally simple in this
+//! first bridge; chunk states, registry, seed, height and terrain come from
+//! `horizon-world`'s production OverworldGenerator.
 
 use horizon_terrain_data::TerrainVertex;
 use horizon_world::{
@@ -20,6 +20,7 @@ use std::{
 
 const SECTION_VOLUME: usize = 16 * 16 * 16;
 const COLUMN_COUNT: usize = 16 * 16;
+const TERRAIN_ATLAS_BYTES: usize = 64 * 32 * 4;
 const STATUS_PATH: &str = "/vol/external01/wiiu/apps/HorizonWiiU/worldgen-status.log";
 
 fn write_status(status: &str) {
@@ -39,30 +40,43 @@ impl Material {
             Self {
                 top: (0, 0),
                 side: (1, 0),
-                bottom: (1, 1),
+                bottom: (3, 0),
             }
-        } else if name.contains("dirt")
-            || name.contains("sand")
-            || name.contains("gravel")
-            || name.contains("terracotta")
-            || name.contains("clay")
-        {
-            Self {
-                top: (1, 1),
-                side: (1, 1),
-                bottom: (1, 1),
-            }
-        } else if name.contains("log") || name.contains("wood") || name.contains("planks") {
-            Self {
-                top: (1, 1),
-                side: (1, 1),
-                bottom: (1, 1),
-            }
-        } else {
+        } else if name.contains("sand") {
             Self {
                 top: (0, 1),
                 side: (0, 1),
                 bottom: (0, 1),
+            }
+        } else if name.contains("gravel") {
+            Self {
+                top: (1, 1),
+                side: (1, 1),
+                bottom: (1, 1),
+            }
+        } else if name.contains("log") {
+            Self {
+                top: (2, 1),
+                side: (2, 1),
+                bottom: (2, 1),
+            }
+        } else if name.contains("planks") || name.contains("wood") {
+            Self {
+                top: (3, 1),
+                side: (3, 1),
+                bottom: (3, 1),
+            }
+        } else if name.contains("dirt") || name.contains("terracotta") || name.contains("clay") {
+            Self {
+                top: (3, 0),
+                side: (3, 0),
+                bottom: (3, 0),
+            }
+        } else {
+            Self {
+                top: (2, 0),
+                side: (2, 0),
+                bottom: (2, 0),
             }
         }
     }
@@ -157,6 +171,7 @@ struct WorldContext {
     opaque: Vec<bool>,
     materials: Vec<Material>,
     spawn: [i32; 2],
+    terrain_atlas: Option<Box<[u8]>>,
 }
 
 struct WorldChunk {
@@ -176,6 +191,17 @@ const PROFILE_OVERWORLD: u32 = 0;
 const PROFILE_SUPERFLAT: u32 = 1;
 
 fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, String> {
+    let terrain_atlas = match std::fs::read(root.join("wiiu-terrain-atlas.rgba")) {
+        Ok(bytes) if bytes.len() == TERRAIN_ATLAS_BYTES => Some(bytes.into_boxed_slice()),
+        Ok(bytes) => {
+            return Err(format!(
+                "prepared Wii U terrain atlas has {} bytes, expected {TERRAIN_ATLAS_BYTES}",
+                bytes.len()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("prepared Wii U terrain atlas: {error}")),
+    };
     let (registry, flags) = load_registry_with_flags(root)
         .map_err(|error| format!("Horizon block registry: {error}"))?;
     write_status(&format!("registry loaded: {} states\n", registry.len()));
@@ -228,6 +254,7 @@ fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, Stri
         opaque,
         materials,
         spawn,
+        terrain_atlas,
     })
 }
 
@@ -244,16 +271,19 @@ fn emit_face(
     z: usize,
 ) {
     let tile = material.tile(face);
-    // The bootstrap atlas is a generated 2x2 placeholder atlas. Inset each
-    // quad from the tile border to avoid sampling an adjacent placeholder.
-    let inset = 1.0 / 16.0;
+    // The Wii U atlas contains four 16x16 tiles per row. Sample texel centers
+    // so point filtering never crosses into a neighboring block texture.
+    let inset_u = 0.5 / 64.0;
+    let inset_v = 0.5 / 32.0;
+    let scale_u = 15.0 / 64.0;
+    let scale_v = 15.0 / 32.0;
     let uv = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     let shade = u32::from(face.shade());
     let color = 0xFF00_0000 | shade * 0x0001_0101;
     for (position, corner_uv) in face.corners(x, y, z).into_iter().zip(uv) {
         let uv = [
-            f32::from(tile.0) * 0.5 + inset + corner_uv[0] * 3.0 / 8.0,
-            f32::from(tile.1) * 0.5 + inset + corner_uv[1] * 3.0 / 8.0,
+            f32::from(tile.0) * 0.25 + inset_u + corner_uv[0] * scale_u,
+            f32::from(tile.1) * 0.5 + inset_v + corner_uv[1] * scale_v,
         ];
         vertices.push(TerrainVertex::new(position, uv, 0, color, 0x00F0));
     }
@@ -527,9 +557,10 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
     let min_height = heights.iter().min().copied().unwrap_or_default();
     let max_height = heights.iter().max().copied().unwrap_or_default();
     write_status(&format!(
-        "region meshed: center={center_x},{center_z} chunks={} vertices={} surface_y={min_height}..{max_height}\n",
+        "region meshed: center={center_x},{center_z} chunks={} vertices={} surface_y={min_height}..{max_height} atlas={}\n",
         side * side,
-        vertices.len()
+        vertices.len(),
+        if context.terrain_atlas.is_some() { "local" } else { "placeholder" }
     ));
     Box::into_raw(Box::new(WorldChunk {
         vertices: vertices.into_boxed_slice(),
@@ -557,6 +588,18 @@ pub extern "C" fn horizon_wiiu_world_chunk_vertices(
     // SAFETY: the C caller provides a writable vertex-count pointer.
     unsafe { vertex_count_out.write(vertex_count) };
     chunk.vertices.as_ptr()
+}
+
+/// Borrow the prepared 64x32 RGBA terrain atlas until the world context closes.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_terrain_atlas() -> *const u8 {
+    let loaded = world()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    loaded
+        .as_ref()
+        .and_then(|context| context.terrain_atlas.as_ref())
+        .map_or(ptr::null(), |atlas| atlas.as_ptr())
 }
 
 /// Copy the generated Horizon world-surface heights for camera grounding.

@@ -12,4 +12,7 @@ horizon-core = { path = "../../crates/horizon-core" }
 horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
 horizon-world = { path = "../../crates/horizon-world", features = ["cafe-terrain-only"] }
 
+[dev-dependencies]
+png = "0.18"
+
 [workspace]

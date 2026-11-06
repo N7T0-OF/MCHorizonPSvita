@@ -22,8 +22,17 @@ extern const uint8_t _binary_horizon_block_gsh_start[];
 #define WORLD_VERTEX_CAPACITY 66560
 #define WORLD_TRIANGLE_CAPACITY ((WORLD_VERTEX_CAPACITY / 4) * 6)
 #define GROUND_HEIGHT_COUNT (16 * 16)
+#ifdef HORIZON_WIIU_WORLDGEN
+#define ATLAS_TILE_SIZE 16
+#define ATLAS_COLUMNS 4
+#define ATLAS_ROWS 2
+#else
 #define ATLAS_TILE_SIZE 4
-#define ATLAS_SIZE (ATLAS_TILE_SIZE * 2)
+#define ATLAS_COLUMNS 2
+#define ATLAS_ROWS 2
+#endif
+#define ATLAS_WIDTH (ATLAS_TILE_SIZE * ATLAS_COLUMNS)
+#define ATLAS_HEIGHT (ATLAS_TILE_SIZE * ATLAS_ROWS)
 #define HORIZON_WIIU_WORLD_PROFILE_SUPERFLAT 1
 #define HORIZON_WIIU_WORLD_REGION_RADIUS 1
 #define HORIZON_WIIU_WORLD_REGION_DIAMETER ((HORIZON_WIIU_WORLD_REGION_RADIUS * 2 + 1) * 16)
@@ -76,6 +85,7 @@ extern void *horizon_wiiu_world_generate_region(int32_t centerX, int32_t centerZ
                                                  uint32_t errorCapacity);
 extern const HorizonTerrainVertex *horizon_wiiu_world_chunk_vertices(
    const void *chunk, uint32_t *vertexCount);
+extern const uint8_t *horizon_wiiu_world_terrain_atlas(void);
 extern int32_t horizon_wiiu_world_chunk_heights(const void *chunk, int16_t *heights,
                                                 uint32_t capacity);
 extern int32_t horizon_wiiu_world_chunk_position(const void *chunk, int32_t output[2]);
@@ -148,8 +158,8 @@ init_block_atlas(void)
    memset(&sBlockAtlas, 0, sizeof(sBlockAtlas));
    sBlockAtlas.surface.use = GX2_SURFACE_USE_TEXTURE;
    sBlockAtlas.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
-   sAtlasWidth = ATLAS_SIZE;
-   sAtlasHeight = ATLAS_SIZE;
+   sAtlasWidth = ATLAS_WIDTH;
+   sAtlasHeight = ATLAS_HEIGHT;
 #ifdef HORIZON_WIIU_CAPTURE
    sAtlasWidth = horizon_wiiu_capture_atlas_width;
    sAtlasHeight = horizon_wiiu_capture_atlas_height;
@@ -191,40 +201,63 @@ init_block_atlas(void)
              sAtlasWidth * 4);
    }
 #else
-   for (uint32_t y = 0; y < ATLAS_SIZE; ++y) {
-      for (uint32_t x = 0; x < ATLAS_SIZE; ++x) {
-         const uint32_t tileX = x / ATLAS_TILE_SIZE;
-         const uint32_t tileY = y / ATLAS_TILE_SIZE;
-         const uint32_t localX = x % ATLAS_TILE_SIZE;
-         const uint32_t localY = y % ATLAS_TILE_SIZE;
-         const BOOL speckle = ((localX + localY) & 1) != 0;
-         uint8_t red, green, blue;
+   const uint8_t *preparedAtlas = NULL;
+#ifdef HORIZON_WIIU_WORLDGEN
+   preparedAtlas = horizon_wiiu_world_terrain_atlas();
+#endif
+   if (preparedAtlas) {
+      for (uint32_t y = 0; y < ATLAS_HEIGHT; ++y) {
+         memcpy(pixels + (y * pitch * 4),
+                preparedAtlas + (y * ATLAS_WIDTH * 4), ATLAS_WIDTH * 4);
+      }
+   } else {
+      for (uint32_t y = 0; y < ATLAS_HEIGHT; ++y) {
+         for (uint32_t x = 0; x < ATLAS_WIDTH; ++x) {
+            const uint32_t tileX = x / ATLAS_TILE_SIZE;
+            const uint32_t tileY = y / ATLAS_TILE_SIZE;
+            const uint32_t localX = x % ATLAS_TILE_SIZE;
+            const uint32_t localY = y % ATLAS_TILE_SIZE;
+            const BOOL speckle = ((localX + localY) & 1) != 0;
+            uint8_t red, green, blue;
 
-         if (tileX == 0 && tileY == 0) {
-            red = speckle ? 72 : 55;
-            green = speckle ? 220 : 199;
-            blue = speckle ? 78 : 62;
-         } else if (tileX == 1 && tileY == 0) {
-            if (localY == 0) {
+            if (tileX == 0 && tileY == 0) {
                red = speckle ? 72 : 55;
-               green = speckle ? 192 : 171;
-               blue = speckle ? 66 : 52;
+               green = speckle ? 220 : 199;
+               blue = speckle ? 78 : 62;
+            } else if (tileX == 1 && tileY == 0) {
+               if (localY == 0) {
+                  red = speckle ? 72 : 55;
+                  green = speckle ? 192 : 171;
+                  blue = speckle ? 66 : 52;
+               } else {
+                  red = speckle ? 177 : 154;
+                  green = speckle ? 109 : 88;
+                  blue = speckle ? 61 : 47;
+               }
+            } else if (tileX == 2 && tileY == 0) {
+               red = speckle ? 137 : 119;
+               green = speckle ? 137 : 119;
+               blue = speckle ? 137 : 119;
+            } else if (tileX == 0 && tileY == 1) {
+               red = speckle ? 226 : 206;
+               green = speckle ? 211 : 190;
+               blue = speckle ? 160 : 140;
+            } else if (tileX == 1 && tileY == 1) {
+               red = speckle ? 119 : 101;
+               green = speckle ? 110 : 94;
+               blue = speckle ? 81 : 69;
+            } else if (tileX == 2 && tileY == 1) {
+               red = localX < 3 || localX > 12 ? 92 : (speckle ? 158 : 135);
+               green = localX < 3 || localX > 12 ? 66 : (speckle ? 112 : 91);
+               blue = localX < 3 || localX > 12 ? 40 : (speckle ? 65 : 49);
             } else {
-               red = speckle ? 177 : 154;
-               green = speckle ? 109 : 88;
-               blue = speckle ? 61 : 47;
+               red = speckle ? 133 : 116;
+               green = speckle ? 87 : 72;
+               blue = speckle ? 49 : 40;
             }
-         } else if (tileX == 0) {
-            red = speckle ? 119 : 101;
-            green = speckle ? 110 : 94;
-            blue = speckle ? 81 : 69;
-         } else {
-            red = speckle ? 133 : 116;
-            green = speckle ? 87 : 72;
-            blue = speckle ? 49 : 40;
-         }
 
-         set_atlas_pixel(pixels, pitch, x, y, red, green, blue);
+            set_atlas_pixel(pixels, pitch, x, y, red, green, blue);
+         }
       }
    }
 #endif
@@ -630,22 +663,7 @@ main(int argc, char **argv)
       return 1;
    }
 
-   if (!init_block_atlas()) {
-      WHBGfxShutdown();
-      WHBProcShutdown();
-      return 2;
-   }
-
-   if (!init_lightmap()) {
-      free_block_atlas();
-      WHBGfxShutdown();
-      WHBProcShutdown();
-      return 3;
-   }
-
    if (!init_block_mesh()) {
-      free_lightmap();
-      free_block_atlas();
       WHBGfxShutdown();
       WHBProcShutdown();
 #ifdef HORIZON_WIIU_WORLDGEN
@@ -653,6 +671,21 @@ main(int argc, char **argv)
 #else
       return 4;
 #endif
+   }
+
+   if (!init_block_atlas()) {
+      free_block_mesh();
+      WHBGfxShutdown();
+      WHBProcShutdown();
+      return 2;
+   }
+
+   if (!init_lightmap()) {
+      free_block_atlas();
+      free_block_mesh();
+      WHBGfxShutdown();
+      WHBProcShutdown();
+      return 3;
    }
 
    uint32_t frame = 0;
