@@ -8,6 +8,7 @@ publish = false
 crate-type = ["staticlib"]
 
 [dependencies]
+libm = "=0.2.16"
 horizon-core = { path = "../../crates/horizon-core", default-features = false, features = ["wiiu-core"] }
 horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
 

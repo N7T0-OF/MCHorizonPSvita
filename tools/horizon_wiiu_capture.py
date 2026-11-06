@@ -92,9 +92,19 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
     records = json.loads((capture_dir / "sections.json").read_text(encoding="utf-8"))
     scene = json.loads((capture_dir / "scene.json").read_text(encoding="utf-8"))
     camera = scene["frame"]["camera"]
+    yaw = float(scene["frame"]["yaw"])
+    pitch = float(scene["frame"]["pitch"])
+    fov = float(scene["frame"]["fov_degrees"])
     min_y = scene["renderer"]["min_y"]
     if len(camera) != 3 or not all(math.isfinite(float(value)) for value in camera):
         raise ValueError("scene camera must contain three finite coordinates")
+    if not all(math.isfinite(value) for value in (yaw, pitch, fov)) or not 0.0 < fov < 180.0:
+        raise ValueError("scene camera rotation or field of view is invalid")
+    width, height = scene["renderer"]["size"]
+    if not isinstance(width, int) or not isinstance(height, int) or width < 1 or height < 1:
+        raise ValueError("scene renderer size must contain positive pixel dimensions")
+    projection_scale = 1.0 / math.tan(math.radians(fov) * 0.5)
+    aspect = width / height
 
     blob_path = capture_dir / "sections.bin"
     blob_size = blob_path.stat().st_size
@@ -207,6 +217,9 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
             "};",
             f"const uint32_t horizon_wiiu_capture_atlas_width = {atlas_width}u;",
             f"const uint32_t horizon_wiiu_capture_atlas_height = {atlas_height}u;",
+            "const float horizon_wiiu_capture_view[4] = {",
+            f"   {c_float(yaw)}, {c_float(pitch)}, {c_float(projection_scale)}, {c_float(aspect)}",
+            "};",
             "",
         ]
     )
@@ -218,6 +231,7 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
         "layers": layers,
         "atlas_size": (atlas_width, atlas_height),
         "atlas_pixels": atlas_pixels,
+        "view": (yaw, pitch, projection_scale, aspect),
         "output": output,
     }
 

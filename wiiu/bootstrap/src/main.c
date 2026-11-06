@@ -24,7 +24,7 @@ extern const uint8_t _binary_horizon_block_gsh_start[];
 #define ATLAS_SIZE (ATLAS_TILE_SIZE * 2)
 
 typedef struct Vertex {
-   float position[3];
+   float position[4];
    float color[3];
    float uv[2];
    float alphaCutout;
@@ -49,8 +49,12 @@ extern uint32_t horizon_wiiu_encode_terrain_quads(const HorizonTerrainVertex *so
                                                    float section_x,
                                                    float section_y,
                                                    float section_z,
-                                                   float camera_x,
-                                                   float camera_z);
+                                                   const float camera[9],
+                                                   uint32_t perspective);
+extern void horizon_wiiu_camera_motion(float yaw_degrees,
+                                       float forward,
+                                       float strafe,
+                                       float output[2]);
 
 #ifdef HORIZON_WIIU_CAPTURE
 extern const HorizonTerrainVertex horizon_wiiu_capture_vertices[];
@@ -59,6 +63,7 @@ extern const float horizon_wiiu_capture_section_origin[3];
 extern const uint8_t horizon_wiiu_capture_atlas_pixels[];
 extern const uint32_t horizon_wiiu_capture_atlas_width;
 extern const uint32_t horizon_wiiu_capture_atlas_height;
+extern const float horizon_wiiu_capture_view[4];
 #endif
 
 static WHBGfxShaderGroup sBlockShader;
@@ -76,7 +81,12 @@ static uint32_t sBlockSectionVertexCount;
 static uint32_t sBlockOutputCapacity;
 static uint32_t sBlockVertexCount;
 static float sCameraX;
+static float sCameraY;
 static float sCameraZ;
+static float sCameraYaw;
+static float sCameraPitch;
+static float sFocalScale = 1.0f;
+static float sAspect = 1.0f;
 static BOOL sBlockMeshDirty = TRUE;
 
 static void
@@ -191,7 +201,7 @@ init_block_mesh(void)
    }
 
    if (!WHBGfxInitShaderAttribute(&sBlockShader, "aPosition", 0,
-                                  offsetof(Vertex, position), GX2_ATTRIB_FORMAT_FLOAT_32_32_32)
+                                  offsetof(Vertex, position), GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32)
        || !WHBGfxInitShaderAttribute(&sBlockShader, "aColor", 0,
                                      offsetof(Vertex, color), GX2_ATTRIB_FORMAT_FLOAT_32_32_32)
        || !WHBGfxInitShaderAttribute(&sBlockShader, "aUv", 0,
@@ -211,6 +221,10 @@ init_block_mesh(void)
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
    }
+   sCameraYaw = horizon_wiiu_capture_view[0];
+   sCameraPitch = horizon_wiiu_capture_view[1];
+   sFocalScale = horizon_wiiu_capture_view[2];
+   sAspect = horizon_wiiu_capture_view[3];
    sBlockOutputCapacity = sBlockSectionVertexCount / 4 * 6;
 #else
    sBlockSection = sFixtureSection;
@@ -251,6 +265,8 @@ update_camera(void)
 {
    const float previousCameraX = sCameraX;
    const float previousCameraZ = sCameraZ;
+   const float previousCameraYaw = sCameraYaw;
+   const float previousCameraPitch = sCameraPitch;
    VPADStatus status;
    VPADReadError error = VPAD_READ_SUCCESS;
    if (VPADRead(VPAD_CHAN_0, &status, 1, &error) <= 0 || error != VPAD_READ_SUCCESS) {
@@ -258,30 +274,49 @@ update_camera(void)
    }
 
    const float deadzone = 0.12f;
+   float forward = 0.0f;
+   float strafe = 0.0f;
    if (status.leftStick.x > deadzone || status.leftStick.x < -deadzone) {
-      sCameraX += status.leftStick.x * 0.025f;
+      strafe += status.leftStick.x * 0.025f;
    }
    if (status.leftStick.y > deadzone || status.leftStick.y < -deadzone) {
-      sCameraZ -= status.leftStick.y * 0.025f;
+      forward += status.leftStick.y * 0.025f;
    }
    if (status.hold & VPAD_BUTTON_LEFT) {
-      sCameraX -= 0.025f;
+      strafe -= 0.025f;
    }
    if (status.hold & VPAD_BUTTON_RIGHT) {
-      sCameraX += 0.025f;
+      strafe += 0.025f;
    }
    if (status.hold & VPAD_BUTTON_UP) {
-      sCameraZ += 0.025f;
+      forward += 0.025f;
    }
    if (status.hold & VPAD_BUTTON_DOWN) {
-      sCameraZ -= 0.025f;
+      forward -= 0.025f;
    }
+
+   if (status.rightStick.x > deadzone || status.rightStick.x < -deadzone) {
+      sCameraYaw += status.rightStick.x * 2.0f;
+   }
+   if (status.rightStick.y > deadzone || status.rightStick.y < -deadzone) {
+      sCameraPitch -= status.rightStick.y * 2.0f;
+   }
+   if (sCameraYaw >= 360.0f) sCameraYaw -= 360.0f;
+   if (sCameraYaw < 0.0f) sCameraYaw += 360.0f;
+   if (sCameraPitch < -89.0f) sCameraPitch = -89.0f;
+   if (sCameraPitch > 89.0f) sCameraPitch = 89.0f;
+
+   float movement[2];
+   horizon_wiiu_camera_motion(sCameraYaw, forward, strafe, movement);
+   sCameraX += movement[0];
+   sCameraZ += movement[1];
 
    if (sCameraX < -4.0f) sCameraX = -4.0f;
    if (sCameraX > 4.0f) sCameraX = 4.0f;
    if (sCameraZ < -4.0f) sCameraZ = -4.0f;
    if (sCameraZ > 4.0f) sCameraZ = 4.0f;
-   if (sCameraX != previousCameraX || sCameraZ != previousCameraZ) {
+   if (sCameraX != previousCameraX || sCameraZ != previousCameraZ
+       || sCameraYaw != previousCameraYaw || sCameraPitch != previousCameraPitch) {
       sBlockMeshDirty = TRUE;
    }
 }
@@ -294,6 +329,15 @@ update_block_mesh(void)
       return FALSE;
    }
 
+   const float camera[9] = {
+      sCameraX, sCameraY, sCameraZ, sCameraYaw, sCameraPitch,
+      sFocalScale, sAspect, 0.05f, 256.0f,
+   };
+#ifdef HORIZON_WIIU_CAPTURE
+   const uint32_t perspective = 1;
+#else
+   const uint32_t perspective = 0;
+#endif
    uint32_t vertexCount = horizon_wiiu_encode_terrain_quads(sBlockSection,
                                                              sBlockSectionVertexCount,
                                                              (float *)buffer,
@@ -301,8 +345,8 @@ update_block_mesh(void)
                                                              sSectionOrigin[0],
                                                              sSectionOrigin[1],
                                                              sSectionOrigin[2],
-                                                             sCameraX,
-                                                             sCameraZ);
+                                                             camera,
+                                                             perspective);
    GX2RUnlockBufferEx(&sBlockBuffer, 0);
    if (vertexCount == 0 || vertexCount > sBlockOutputCapacity) {
       return FALSE;
