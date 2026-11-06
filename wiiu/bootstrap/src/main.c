@@ -5,6 +5,7 @@
 #include <coreinit/debug.h>
 #include <gx2/clear.h>
 #include <gx2/draw.h>
+#include <gx2/event.h>
 #include <gx2/registers.h>
 #include <gx2/sampler.h>
 #include <gx2/shaders.h>
@@ -135,6 +136,7 @@ static uint32_t sBlockOutputCapacity;
 static uint32_t sBlockVertexCount;
 #ifdef HORIZON_WIIU_WORLDGEN
 static int sBlockInitFailure;
+static uint32_t sRegionReloadCooldown;
 #endif
 static float sCameraX;
 static float sCameraY;
@@ -480,6 +482,122 @@ init_block_mesh(void)
    return TRUE;
 }
 
+#ifdef HORIZON_WIIU_WORLDGEN
+#if HORIZON_WIIU_WORLD_REGION_RADIUS > 0
+static int32_t
+world_chunk_from_coordinate(float coordinate)
+{
+   const float scaled = coordinate / 16.0f;
+   int32_t chunk = (int32_t)scaled;
+   if (scaled < (float)chunk) {
+      --chunk;
+   }
+   return chunk;
+}
+
+static BOOL
+replace_runtime_world_region(int32_t centerChunkX, int32_t centerChunkZ)
+{
+   char error[256] = {0};
+   void *newChunk = horizon_wiiu_world_generate_region(
+      centerChunkX, centerChunkZ, HORIZON_WIIU_WORLD_REGION_RADIUS,
+      error, sizeof(error));
+   if (!newChunk) {
+      OSReport("HorizonWiiU: region reload (%d,%d) failed: %s\n",
+               centerChunkX, centerChunkZ, error);
+      sRegionReloadCooldown = 120;
+      return FALSE;
+   }
+
+   uint32_t vertexCount = 0;
+   const HorizonTerrainVertex *vertices =
+      horizon_wiiu_world_chunk_vertices(newChunk, &vertexCount);
+   int32_t regionOrigin[2] = {0, 0};
+   int16_t heights[HORIZON_WIIU_WORLD_GROUND_HEIGHT_COUNT];
+   if (!vertices || vertexCount == 0 || (vertexCount % 4) != 0
+       || !horizon_wiiu_world_chunk_position(newChunk, regionOrigin)
+       || !horizon_wiiu_world_chunk_heights(
+          newChunk, heights, HORIZON_WIIU_WORLD_GROUND_HEIGHT_COUNT)
+       || vertexCount / 4 > UINT32_MAX / 6) {
+      OSReport("HorizonWiiU: region reload (%d,%d) returned invalid mesh data\n",
+               centerChunkX, centerChunkZ);
+      horizon_wiiu_world_free_chunk(newChunk);
+      sRegionReloadCooldown = 120;
+      return FALSE;
+   }
+
+   const uint32_t requiredCapacity = vertexCount / 4 * 6;
+   if (requiredCapacity > sBlockBuffer.elemCount) {
+      GX2RBuffer replacement = {0};
+      replacement.flags = sBlockBuffer.flags;
+      replacement.elemSize = sizeof(Vertex);
+      replacement.elemCount = requiredCapacity;
+      if (!GX2RCreateBuffer(&replacement)) {
+         OSReport("HorizonWiiU: could not grow terrain buffer to %u vertices\n",
+                  requiredCapacity);
+         horizon_wiiu_world_free_chunk(newChunk);
+         sRegionReloadCooldown = 120;
+         return FALSE;
+      }
+      GX2DrawDone();
+      GX2RDestroyBufferEx(&sBlockBuffer, sBlockBuffer.flags);
+      sBlockBuffer = replacement;
+      sBlockOutputCapacity = requiredCapacity;
+   }
+
+   void *oldChunk = sRuntimeWorldChunk;
+   sRuntimeWorldChunk = newChunk;
+   sBlockSection = vertices;
+   sBlockSectionVertexCount = vertexCount;
+   sSectionOrigin[0] = (float)(regionOrigin[0] * 16);
+   sSectionOrigin[1] = 0.0f;
+   sSectionOrigin[2] = (float)(regionOrigin[1] * 16);
+   memcpy(sGroundHeights, heights, sizeof(sGroundHeights));
+   if (oldChunk) {
+      horizon_wiiu_world_free_chunk(oldChunk);
+   }
+   sRegionReloadCooldown = 0;
+   sBlockMeshDirty = TRUE;
+   OSReport("HorizonWiiU: region moved to (%d,%d), %u vertices\n",
+            regionOrigin[0], regionOrigin[1], vertexCount);
+   return TRUE;
+}
+#endif
+
+static void
+stream_runtime_world_region(void)
+{
+#if HORIZON_WIIU_WORLD_REGION_RADIUS > 0
+   if (sRegionReloadCooldown != 0) {
+      --sRegionReloadCooldown;
+      return;
+   }
+   const float minX = sSectionOrigin[0] + 0.5f;
+   const float maxX = sSectionOrigin[0] + HORIZON_WIIU_WORLD_REGION_DIAMETER - 0.5f;
+   const float minZ = sSectionOrigin[2] + 0.5f;
+   const float maxZ = sSectionOrigin[2] + HORIZON_WIIU_WORLD_REGION_DIAMETER - 0.5f;
+   int32_t centerChunkX = (int32_t)sSectionOrigin[0] / 16
+                          + HORIZON_WIIU_WORLD_REGION_RADIUS;
+   int32_t centerChunkZ = (int32_t)sSectionOrigin[2] / 16
+                          + HORIZON_WIIU_WORLD_REGION_RADIUS;
+
+   if (sCameraX < minX + 4.0f || sCameraX > maxX - 4.0f
+       || sCameraZ < minZ + 4.0f || sCameraZ > maxZ - 4.0f) {
+      centerChunkX = world_chunk_from_coordinate(sCameraX);
+      centerChunkZ = world_chunk_from_coordinate(sCameraZ);
+   }
+
+   const int32_t currentCenterX = (int32_t)sSectionOrigin[0] / 16
+                                  + HORIZON_WIIU_WORLD_REGION_RADIUS;
+   const int32_t currentCenterZ = (int32_t)sSectionOrigin[2] / 16
+                                  + HORIZON_WIIU_WORLD_REGION_RADIUS;
+   if (centerChunkX != currentCenterX || centerChunkZ != currentCenterZ) {
+      replace_runtime_world_region(centerChunkX, centerChunkZ);
+   }
+#endif
+}
+#endif
+
 static void
 update_camera(void)
 {
@@ -546,6 +664,9 @@ update_camera(void)
    if (sCameraX > maxX) sCameraX = maxX;
    if (sCameraZ < minZ) sCameraZ = minZ;
    if (sCameraZ > maxZ) sCameraZ = maxZ;
+#ifdef HORIZON_WIIU_WORLDGEN
+   stream_runtime_world_region();
+#endif
    const uint32_t localX = (uint32_t)(sCameraX - sSectionOrigin[0]);
    const uint32_t localZ = (uint32_t)(sCameraZ - sSectionOrigin[2]);
    sCameraY = (float)sGroundHeights[
