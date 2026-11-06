@@ -5,9 +5,13 @@
 //! first bridge; chunk states, registry, seed, height and terrain come from
 //! `horizon-world`'s production OverworldGenerator.
 
+use horizon_core::position::ChunkPos;
 use horizon_terrain_data::TerrainVertex;
 use horizon_world::{
+    compression::Compression,
     level::data::load_registry_with_flags,
+    nbt::{Limits, NamedTag, Tag},
+    region::{ChunkRecord, RegionFile},
     registry::{BlockRegistry, BlockStateId},
     worldgen::generator::{
         FlatSettings, GeneratorData, GeneratorWorker, OverworldGenerator, ProtoChunk, StageTimings,
@@ -16,7 +20,7 @@ use horizon_world::{
 use std::{
     collections::HashMap,
     ffi::{c_char, c_void, CStr},
-    path::Path,
+    path::{Path, PathBuf},
     ptr,
     sync::{Mutex, OnceLock},
     thread::{self, JoinHandle},
@@ -26,6 +30,7 @@ const SECTION_VOLUME: usize = 16 * 16 * 16;
 const COLUMN_COUNT: usize = 16 * 16;
 const TERRAIN_ATLAS_BYTES: usize = 64 * 32 * 4;
 const STATUS_PATH: &str = "/vol/external01/wiiu/apps/HorizonWiiU/worldgen-status.log";
+const MAX_SAVED_EDITS: usize = 262_144;
 
 fn write_status(status: &str) {
     let _ = std::fs::write(STATUS_PATH, status.as_bytes());
@@ -176,6 +181,9 @@ struct WorldContext {
     materials: Vec<Material>,
     placement_state: u32,
     edits: HashMap<(i32, i32, i32), u32>,
+    edits_path: PathBuf,
+    seed: i64,
+    profile: u32,
     spawn: [i32; 2],
     terrain_atlas: Option<Box<[u8]>>,
 }
@@ -202,6 +210,182 @@ fn world() -> &'static Mutex<Option<WorldContext>> {
 
 fn pending_region() -> &'static Mutex<Option<JoinHandle<Result<usize, String>>>> {
     PENDING_REGION.get_or_init(|| Mutex::new(None))
+}
+
+fn edits_path(resources: &Path, seed: i64, profile: u32) -> PathBuf {
+    let app_dir = resources
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(resources);
+    app_dir
+        .join("saves")
+        .join(format!("world-{seed}-{profile}"))
+        .join("wiiu-edits")
+        .join("region")
+}
+
+fn edit_chunk_tag(
+    chunk: ChunkPos,
+    edits: impl Iterator<Item = ((i32, i32, i32), u32)>,
+    seed: i64,
+    profile: u32,
+) -> NamedTag {
+    let mut entries: Vec<_> = edits.collect();
+    entries.sort_unstable_by_key(|(position, _)| *position);
+    let edit_list = entries
+        .into_iter()
+        .map(|((x, y, z), state)| {
+            Tag::compound([
+                ("x", Tag::Int(x)),
+                ("y", Tag::Int(y)),
+                ("z", Tag::Int(z)),
+                ("state", Tag::Int(state as i32)),
+            ])
+        })
+        .collect();
+    NamedTag {
+        name: "HorizonWiiUEdits".into(),
+        tag: Tag::compound([
+            ("DataVersion", Tag::Int(horizon_world::DATA_VERSION)),
+            ("xPos", Tag::Int(chunk.x)),
+            ("zPos", Tag::Int(chunk.z)),
+            ("seed", Tag::Long(seed)),
+            ("profile", Tag::Int(profile as i32)),
+            ("edits", Tag::List(edit_list)),
+        ]),
+    }
+}
+
+fn decode_edit_chunk(
+    record: &NamedTag,
+    chunk: ChunkPos,
+    seed: i64,
+    profile: u32,
+    opaque: &[bool],
+    edits: &mut HashMap<(i32, i32, i32), u32>,
+) -> Result<(), String> {
+    let read_int = |tag: &Tag, name| match tag.get(name) {
+        Some(Tag::Int(value)) => Ok(*value),
+        _ => Err(format!("world edit chunk is missing {name}")),
+    };
+    if read_int(&record.tag, "DataVersion")? != horizon_world::DATA_VERSION
+        || read_int(&record.tag, "xPos")? != chunk.x
+        || read_int(&record.tag, "zPos")? != chunk.z
+        || record.tag.get("seed") != Some(&Tag::Long(seed))
+        || read_int(&record.tag, "profile")? != profile as i32
+    {
+        return Err("world edit chunk identity or version does not match".to_owned());
+    }
+    let Some(Tag::List(records)) = record.tag.get("edits") else {
+        return Err("world edit chunk has no edit list".to_owned());
+    };
+    for record in records {
+        let position = (
+            read_int(record, "x")?,
+            read_int(record, "y")?,
+            read_int(record, "z")?,
+        );
+        let state = read_int(record, "state")? as u32;
+        if position.0.div_euclid(16) != chunk.x || position.2.div_euclid(16) != chunk.z {
+            return Err("world edit lies outside its saved chunk".to_owned());
+        }
+        if state != 0 && !is_opaque(state, opaque) {
+            return Err(format!("world edit save contains invalid state {state}"));
+        }
+        if edits.insert(position, state).is_some() {
+            return Err("world edit save contains duplicate coordinates".to_owned());
+        }
+        if edits.len() > MAX_SAVED_EDITS {
+            return Err(format!("world edit save exceeds {MAX_SAVED_EDITS} edits"));
+        }
+    }
+    Ok(())
+}
+
+fn load_edits(
+    path: &Path,
+    seed: i64,
+    profile: u32,
+    opaque: &[bool],
+) -> Result<HashMap<(i32, i32, i32), u32>, String> {
+    let mut edits = HashMap::new();
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(edits),
+        Err(error) => {
+            return Err(format!(
+                "inspect world edit directory {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    if !metadata.is_dir() {
+        return Err(format!(
+            "world edit path {} is not a directory",
+            path.display()
+        ));
+    }
+    let files = std::fs::read_dir(path)
+        .map_err(|error| format!("read world edit directory {}: {error}", path.display()))?;
+    for entry in files {
+        let entry = entry.map_err(|error| format!("read world edit directory entry: {error}"))?;
+        if entry
+            .path()
+            .extension()
+            .is_none_or(|extension| extension != "mca")
+        {
+            continue;
+        }
+        let mut region = RegionFile::open(entry.path()).map_err(|error| {
+            format!("open world edit region {}: {error}", entry.path().display())
+        })?;
+        for (chunk, _) in region.chunks().collect::<Vec<_>>() {
+            let record = region
+                .read(chunk)
+                .map_err(|error| format!("read world edit chunk {chunk:?}: {error}"))?
+                .ok_or_else(|| format!("world edit region lost chunk {chunk:?}"))?;
+            let tag = record
+                .nbt(Limits::saved())
+                .map_err(|error| format!("decode world edit chunk {chunk:?}: {error}"))?;
+            decode_edit_chunk(&tag, chunk, seed, profile, opaque, &mut edits)?;
+        }
+    }
+    Ok(edits)
+}
+
+fn save_chunk_edits(
+    path: &Path,
+    edits: &HashMap<(i32, i32, i32), u32>,
+    chunk: ChunkPos,
+    seed: i64,
+    profile: u32,
+) -> Result<(), String> {
+    let chunk_edits = edits.iter().filter_map(|(&position, &state)| {
+        (position.0.div_euclid(16) == chunk.x && position.2.div_euclid(16) == chunk.z)
+            .then_some((position, state))
+    });
+    let chunk_edits: Vec<_> = chunk_edits.collect();
+    if chunk_edits.is_empty() {
+        return Ok(());
+    }
+    if edits.len() > MAX_SAVED_EDITS {
+        return Err(format!(
+            "world has {} edits, save limit is {MAX_SAVED_EDITS}",
+            edits.len()
+        ));
+    }
+    std::fs::create_dir_all(path)
+        .map_err(|error| format!("create world edit directory {}: {error}", path.display()))?;
+    let region_path = path.join(format!("r.{}.{}.mca", chunk.x >> 5, chunk.z >> 5));
+    let mut region = RegionFile::open_writable(region_path, true)
+        .map_err(|error| format!("open world edit region: {error}"))?;
+    let root = edit_chunk_tag(chunk, chunk_edits.into_iter(), seed, profile);
+    let record = ChunkRecord::from_nbt(&root, Compression::Zlib, 0, Limits::saved())
+        .map_err(|error| format!("encode world edit chunk {chunk:?}: {error}"))?;
+    region
+        .write(chunk, &record)
+        .and_then(|()| region.sync())
+        .map_err(|error| format!("write world edit chunk {chunk:?}: {error}"))
 }
 
 const PROFILE_OVERWORLD: u32 = 0;
@@ -240,10 +424,22 @@ fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, Stri
         })
         .collect::<Result<Vec<_>, _>>()?;
     write_status("registry material map loaded\n");
-    let opaque = flags
+    let opaque: Vec<bool> = flags
         .into_iter()
         .map(|(is_air, has_fluid)| !is_air && !has_fluid)
         .collect();
+    let edits_path = edits_path(root, seed, profile);
+    write_status("world edit load started\n");
+    let edits = match load_edits(&edits_path, seed, profile, &opaque) {
+        Ok(edits) => {
+            write_status(&format!("world edits loaded: {}\n", edits.len()));
+            edits
+        }
+        Err(error) => {
+            write_status(&format!("world edits ignored: {error}\n"));
+            HashMap::new()
+        }
+    };
     let data = GeneratorData::load(&root.join("worldgen"), registry)
         .map_err(|error| format!("Horizon worldgen data: {error}"))?;
     write_status("worldgen tables loaded\n");
@@ -280,7 +476,10 @@ fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, Stri
         opaque,
         materials,
         placement_state,
-        edits: HashMap::new(),
+        edits,
+        edits_path,
+        seed,
+        profile,
         spawn,
         terrain_atlas,
     })
@@ -1261,6 +1460,13 @@ pub extern "C" fn horizon_wiiu_world_set_block(
         return 0;
     }
     context.edits.insert((world_x, y, world_z), state);
+    let persistence = save_chunk_edits(
+        &context.edits_path,
+        &context.edits,
+        ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16)),
+        context.seed,
+        context.profile,
+    );
     chunk.heights = surface_heights(
         &chunk.blocks,
         chunk.diameter,
@@ -1276,10 +1482,16 @@ pub extern "C" fn horizon_wiiu_world_set_block(
         &chunk.opaque,
         &chunk.materials,
     );
-    write_status(&format!(
-        "block edited: {world_x},{y},{world_z} {old_state}->{state} vertices={}\n",
-        chunk.vertices.len()
-    ));
+    match persistence {
+        Ok(()) => write_status(&format!(
+            "block edited and saved: {world_x},{y},{world_z} {old_state}->{state} vertices={} edits={}\n",
+            chunk.vertices.len(),
+            context.edits.len()
+        )),
+        Err(error) => write_status(&format!(
+            "block edited but save failed: {world_x},{y},{world_z} {old_state}->{state}: {error}\n"
+        )),
+    }
     1
 }
 
@@ -1340,9 +1552,140 @@ pub extern "C" fn horizon_wiiu_world_spawn(output: *mut i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn materials() -> Vec<Material> {
         vec![Material::from_name("minecraft:stone"); 2]
+    }
+
+    fn temporary_save_path() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("horizon-wiiu-edits-{}-{nonce}", std::process::id()))
+    }
+
+    #[test]
+    fn world_edit_nbt_is_deterministic_and_validates_identity_and_states() {
+        let mut first = HashMap::new();
+        first.insert((10, -60, 4), 1);
+        first.insert((9, -59, 5), 0);
+        let mut second = HashMap::new();
+        second.insert((9, -59, 5), 0);
+        second.insert((10, -60, 4), 1);
+
+        let chunk = ChunkPos::new(0, 0);
+        let make_tag = |edits: &HashMap<_, _>| {
+            edit_chunk_tag(
+                chunk,
+                edits.iter().map(|(&position, &state)| (position, state)),
+                12345,
+                PROFILE_SUPERFLAT,
+            )
+        };
+        let tag = make_tag(&first);
+        assert_eq!(tag, make_tag(&second));
+        let mut decoded = HashMap::new();
+        decode_edit_chunk(
+            &tag,
+            chunk,
+            12345,
+            PROFILE_SUPERFLAT,
+            &[false, true],
+            &mut decoded,
+        )
+        .unwrap();
+        assert_eq!(decoded, first);
+        let mut invalid_state = tag.clone();
+        let Some(Tag::List(records)) = invalid_state.tag.get_mut("edits") else {
+            unreachable!();
+        };
+        records[0]
+            .get_mut("state")
+            .unwrap()
+            .clone_from(&Tag::Int(2));
+        assert!(decode_edit_chunk(
+            &invalid_state,
+            chunk,
+            12345,
+            PROFILE_SUPERFLAT,
+            &[false, true],
+            &mut HashMap::new(),
+        )
+        .is_err());
+        assert!(decode_edit_chunk(
+            &tag,
+            chunk,
+            54321,
+            PROFILE_SUPERFLAT,
+            &[false, true],
+            &mut HashMap::new(),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn world_edit_chunks_round_trip_through_horizon_region_files() {
+        let root = temporary_save_path();
+        let path = root.join("wiiu-edits").join("region");
+        let mut edits = HashMap::new();
+        edits.insert((103, -61, -27), 0);
+        edits.insert((104, -61, -27), 1);
+        edits.insert((128, -60, -32), 1);
+        edits.insert((-513, 12, 527), 1);
+
+        save_chunk_edits(
+            &path,
+            &edits,
+            ChunkPos::new(6, -2),
+            12345,
+            PROFILE_SUPERFLAT,
+        )
+        .unwrap();
+        save_chunk_edits(
+            &path,
+            &edits,
+            ChunkPos::new(8, -2),
+            12345,
+            PROFILE_SUPERFLAT,
+        )
+        .unwrap();
+        save_chunk_edits(
+            &path,
+            &edits,
+            ChunkPos::new(-33, 32),
+            12345,
+            PROFILE_SUPERFLAT,
+        )
+        .unwrap();
+        assert_eq!(
+            load_edits(&path, 12345, PROFILE_SUPERFLAT, &[false, true]).unwrap(),
+            edits
+        );
+
+        edits.insert((105, -61, -27), 1);
+        save_chunk_edits(
+            &path,
+            &edits,
+            ChunkPos::new(6, -2),
+            12345,
+            PROFILE_SUPERFLAT,
+        )
+        .unwrap();
+        assert_eq!(
+            load_edits(&path, 12345, PROFILE_SUPERFLAT, &[false, true]).unwrap(),
+            edits
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_world_edit_directory_loads_as_an_empty_overlay() {
+        let path = temporary_save_path().join("absent").join("region");
+        assert!(load_edits(&path, 12345, PROFILE_SUPERFLAT, &[false, true])
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
