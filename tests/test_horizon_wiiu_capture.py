@@ -50,16 +50,27 @@ class CaptureConversionTests(unittest.TestCase):
 
             self.assertEqual(result["key"], (0, 4, 0))
             self.assertEqual(result["origin"], [0.0, 0.0, 0.0])
-            self.assertEqual(result["vertices"], 4)
+            self.assertEqual(result["keys"], [(0, 4, 0), (10, 0, 0)])
+            self.assertEqual(result["sections"], 2)
+            self.assertEqual(result["vertices"], 8)
             self.assertEqual(result["layers"], [7])
             self.assertEqual(result["atlas_size"], (3, 3))
             self.assertEqual(result["view"][:2], (0.0, 0.0))
             self.assertIn("0x1.8000000000000p+1f", generated)
+            self.assertIn(
+                "0x1.4000000000000p+7f, -0x1.f000000000000p+5f, "
+                "0x1.8000000000000p+1f",
+                generated,
+            )
             self.assertIn("16384u, 16384u", generated)
             self.assertIn("0u, 4660u, 0xA1B2C3D4u", generated)
             self.assertIn("horizon_wiiu_capture_atlas_width = 3u", generated)
             self.assertIn("horizon_wiiu_capture_view[4]", generated)
             self.assertIn("0x07u, 0x08u, 0x09u, 0xFFu", generated)
+
+            limited = capture.convert(root, root / "limited.c", max_vertices=4)
+            self.assertEqual(limited["keys"], [(0, 4, 0)])
+            self.assertEqual(limited["vertices"], 4)
 
     def test_rejects_truncated_capture_and_oversized_nearest_section(self):
         with tempfile.TemporaryDirectory() as scratch:

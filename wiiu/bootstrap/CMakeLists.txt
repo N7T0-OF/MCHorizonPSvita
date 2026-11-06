@@ -5,7 +5,7 @@ find_program(CARGO_EXECUTABLE cargo REQUIRED)
 find_program(POWERPC_OBJCOPY_EXECUTABLE powerpc-eabi-objcopy REQUIRED)
 find_program(CAFEGLSL_COMPILER_EXECUTABLE glslcompiler REQUIRED)
 set(HORIZON_WIIU_CAPTURE_DIR "" CACHE PATH "Horizon render-capture directory; empty uses the fixture scene")
-set(HORIZON_WIIU_CAPTURE_MAX_VERTICES 65536 CACHE STRING "Largest solid section accepted from a render capture")
+set(HORIZON_WIIU_CAPTURE_MAX_VERTICES 65536 CACHE STRING "Maximum captured solid vertices converted for GX2")
 
 set(RUST_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rust-target")
 set(RUST_TARGET_NAME "powerpc-cafe-nintendo")
@@ -78,7 +78,7 @@ if(HORIZON_WIIU_CAPTURE_DIR)
          "${HORIZON_WIIU_CAPTURE_DIR}/sections.json"
          "${HORIZON_WIIU_CAPTURE_DIR}/sections.bin"
          "${HORIZON_WIIU_CAPTURE_DIR}/sprites.bin"
-      COMMENT "Converting a captured Horizon section for GX2"
+   COMMENT "Converting captured Horizon sections for GX2"
       VERBATIM
    )
 endif()

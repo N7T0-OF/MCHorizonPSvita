@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Convert a Horizon render capture into one GX2-ready section and compact atlas.
+"""Convert nearby Horizon render sections into a GX2-ready mesh and compact atlas.
 
 The desktop capture stores native-endian `TerrainVertex` records. This tool
-decodes them on the host, remaps the selected section's sprite layers into a
-small guarded 2D atlas, and emits C constants for the Wii U big-endian ABI.
+decodes them on the host, combines the nearest sections within a vertex budget,
+remaps their sprite layers into a small guarded 2D atlas, and emits C constants
+for the Wii U big-endian ABI.
 """
 
 import argparse
@@ -139,35 +140,49 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
         raise ValueError("capture contains no solid section meshes")
 
     candidates.sort(key=lambda item: (item[0], item[1]))
-    selected = next((candidate for candidate in candidates if candidate[2] <= max_vertices), None)
-    if selected is None:
+    selected = []
+    remaining_vertices = max_vertices
+    for candidate in candidates:
+        if candidate[2] <= remaining_vertices:
+            selected.append(candidate)
+            remaining_vertices -= candidate[2]
+    if not selected:
         nearest = candidates[0]
         raise ValueError(
             f"nearest solid section {nearest[1]} has {nearest[2]} vertices; "
             f"increase --max-vertices (currently {max_vertices})"
         )
 
-    _, key, vertex_count, offset, origin = selected
-    with blob_path.open("rb") as stream:
-        stream.seek(offset)
-        data = stream.read(vertex_count * VERTEX_SIZE)
-    if len(data) != vertex_count * VERTEX_SIZE:
-        raise ValueError("sections.bin ended while reading the selected solid mesh")
-
+    key = selected[0][1]
+    origin = selected[0][4]
+    vertex_count = sum(candidate[2] for candidate in selected)
     endian = "<" if source_endian == "little" else ">"
     vertex_format = struct.Struct(f"{endian}fffHHHHI")
     decoded = []
     layers = set()
-    for index in range(vertex_count):
-        position_x, position_y, position_z, u, v, layer, light, color = vertex_format.unpack_from(
-            data, index * VERTEX_SIZE
-        )
-        position = (position_x, position_y, position_z)
-        if not all(math.isfinite(value) for value in position):
-            raise ValueError(f"section {key} vertex {index} has a non-finite position")
-        sprite_layer = layer & 0x7FFF
-        layers.add(sprite_layer)
-        decoded.append((position, u, v, layer, light, color, sprite_layer))
+    with blob_path.open("rb") as stream:
+        for _, section_key, section_vertices, offset, section_origin in selected:
+            stream.seek(offset)
+            data = stream.read(section_vertices * VERTEX_SIZE)
+            if len(data) != section_vertices * VERTEX_SIZE:
+                raise ValueError(
+                    f"sections.bin ended while reading section {section_key}"
+                )
+            section_delta = [section_origin[axis] - origin[axis] for axis in range(3)]
+            for index in range(section_vertices):
+                position_x, position_y, position_z, u, v, layer, light, color = vertex_format.unpack_from(
+                    data, index * VERTEX_SIZE
+                )
+                position = (
+                    position_x + section_delta[0],
+                    position_y + section_delta[1],
+                    position_z + section_delta[2],
+                )
+                if not all(math.isfinite(value) for value in position):
+                    raise ValueError(f"section {section_key} vertex {index} has a non-finite position")
+                sprite_layer = layer & 0x7FFF
+                layers.add(sprite_layer)
+                decoded.append((position, u, v, layer, light, color, sprite_layer))
 
     layers = sorted(layers)
     layer_map, atlas_pixels, atlas_width, atlas_height, sprite_size = make_compact_atlas(
@@ -226,6 +241,8 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
     output.write_text(contents, encoding="ascii", newline="\n")
     return {
         "key": key,
+        "keys": [candidate[1] for candidate in selected],
+        "sections": len(selected),
         "vertices": vertex_count,
         "origin": origin,
         "layers": layers,
@@ -248,7 +265,8 @@ def main(argv=None):
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         parser.error(str(error))
     print(
-        f"selected section {result['key']}: {result['vertices']} solid vertices from "
+        f"selected {result['sections']} sections (nearest {result['key']}): "
+        f"{result['vertices']} solid vertices from "
         f"{len(result['layers'])} sprite layers, compact atlas "
         f"{result['atlas_size'][0]}x{result['atlas_size'][1]}, camera-relative origin "
         f"{result['origin']} -> {result['output']}"
