@@ -6,6 +6,17 @@ use horizon_core::position::BlockPos;
 
 const BLOCK_VERTEX_COUNT: u32 = 18;
 
+fn atlas_uv(tile_x: u32, tile_y: u32, uv: [f32; 2]) -> [f32; 2] {
+    let tile_origin = [
+        tile_x as f32 * 0.5 + 1.0 / 16.0,
+        tile_y as f32 * 0.5 + 1.0 / 16.0,
+    ];
+    [
+        tile_origin[0] + uv[0] * 3.0 / 8.0,
+        tile_origin[1] + uv[1] * 3.0 / 8.0,
+    ]
+}
+
 /// Fills a projected three-face block mesh using Horizon's vanilla BlockPos.
 /// The mesh is deliberately a small GX2 smoke test, not Horizon world output.
 #[unsafe(no_mangle)]
@@ -21,50 +32,51 @@ pub extern "C" fn horizon_wiiu_build_block_mesh(vertices: *mut f32, capacity: u3
     let far_top = origin.offset(1, 1, 1);
     let x_bottom = origin.offset(1, 0, 0);
     let z_bottom = origin.offset(0, 0, 1);
-    let color_top = [0.56, 0.82, 0.34];
-    let color_x = [0.34, 0.64, 0.30];
-    let color_z = [0.22, 0.48, 0.26];
+    let color_top = [1.0, 1.0, 1.0];
+    let color_x = [0.96, 0.96, 0.96];
+    let color_z = [0.82, 0.82, 0.82];
 
     // Each face is two triangles. The top and two visible sides form a simple
     // isometric block while keeping depth-buffer setup separate from this first
     // Horizon-data-to-GX2 vertex path.
     let mesh = [
-        (top, color_top),
-        (x_top, color_top),
-        (far_top, color_top),
-        (top, color_top),
-        (far_top, color_top),
-        (z_top, color_top),
-        (top, color_x),
-        (origin.offset(1, 1, 0), color_x),
-        (x_bottom, color_x),
-        (top, color_x),
-        (x_bottom, color_x),
-        (origin, color_x),
-        (top, color_z),
-        (z_top, color_z),
-        (z_bottom, color_z),
-        (top, color_z),
-        (z_bottom, color_z),
-        (origin, color_z),
+        (top, color_top, atlas_uv(0, 0, [0.0, 0.0])),
+        (x_top, color_top, atlas_uv(0, 0, [1.0, 0.0])),
+        (far_top, color_top, atlas_uv(0, 0, [1.0, 1.0])),
+        (top, color_top, atlas_uv(0, 0, [0.0, 0.0])),
+        (far_top, color_top, atlas_uv(0, 0, [1.0, 1.0])),
+        (z_top, color_top, atlas_uv(0, 0, [0.0, 1.0])),
+        (top, color_x, atlas_uv(1, 0, [0.0, 0.0])),
+        (x_top, color_x, atlas_uv(1, 0, [1.0, 0.0])),
+        (x_bottom, color_x, atlas_uv(1, 0, [1.0, 1.0])),
+        (top, color_x, atlas_uv(1, 0, [0.0, 0.0])),
+        (x_bottom, color_x, atlas_uv(1, 0, [1.0, 1.0])),
+        (origin, color_x, atlas_uv(1, 0, [0.0, 1.0])),
+        (top, color_z, atlas_uv(1, 0, [0.0, 0.0])),
+        (z_top, color_z, atlas_uv(1, 0, [1.0, 0.0])),
+        (z_bottom, color_z, atlas_uv(1, 0, [1.0, 1.0])),
+        (top, color_z, atlas_uv(1, 0, [0.0, 0.0])),
+        (z_bottom, color_z, atlas_uv(1, 0, [1.0, 1.0])),
+        (origin, color_z, atlas_uv(1, 0, [0.0, 1.0])),
     ];
 
-    for (index, (position, color)) in mesh.into_iter().enumerate() {
+    for (index, (position, color, uv)) in mesh.into_iter().enumerate() {
         let x = position.x - origin.x;
         let y = position.y - origin.y;
         let z = position.z - origin.z;
-        // Dimetric projection onto the bootstrap's existing clip-space shader.
+        // Dimetric projection onto the GX2 shader's clip-space input.
         let projected = [
             (x - z) as f32 * 0.43,
             (x + z) as f32 * 0.20 - y as f32 * 0.50 + 0.05,
-            0.0,
+            0.5 + (x + z) as f32 * 0.04 - y as f32 * 0.04,
         ];
-        let base = index * 6;
+        let base = index * 8;
         // SAFETY: the caller promises a writable array of at least 18 vertices;
-        // each vertex occupies six f32 values and capacity was checked above.
+        // each vertex occupies eight f32 values and capacity was checked above.
         unsafe {
             ptr::copy_nonoverlapping(projected.as_ptr(), vertices.add(base), 3);
             ptr::copy_nonoverlapping(color.as_ptr(), vertices.add(base + 3), 3);
+            ptr::copy_nonoverlapping(uv.as_ptr(), vertices.add(base + 6), 2);
         }
     }
 

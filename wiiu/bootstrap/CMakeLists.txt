@@ -34,23 +34,23 @@ add_custom_target(horizon_wiiu_rust DEPENDS "${RUST_STATICLIB}")
 add_library(horizon_wiiu_rustlib STATIC IMPORTED GLOBAL)
 set_target_properties(horizon_wiiu_rustlib PROPERTIES IMPORTED_LOCATION "${RUST_STATICLIB}")
 
-set(GSH "${CMAKE_CURRENT_BINARY_DIR}/horizon_triangle.gsh")
-set(GSH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/horizon_triangle_gsh.o")
+set(GSH "${CMAKE_CURRENT_BINARY_DIR}/horizon_block.gsh")
+set(GSH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/horizon_block_gsh.o")
 add_custom_command(
    OUTPUT "${GSH}"
    COMMAND "${CAFEGLSL_COMPILER_EXECUTABLE}"
-      -vs "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert"
-      -ps "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag"
+      -vs "${CMAKE_CURRENT_SOURCE_DIR}/shaders/block.vert"
+      -ps "${CMAKE_CURRENT_SOURCE_DIR}/shaders/block.frag"
       -o "${GSH}"
-   DEPENDS shaders/triangle.vert shaders/triangle.frag
-   COMMENT "Compiling the GX2 triangle shaders"
+   DEPENDS shaders/block.vert shaders/block.frag
+   COMMENT "Compiling the GX2 block shaders"
    VERBATIM
 )
 add_custom_command(
    OUTPUT "${GSH_OBJECT}"
    COMMAND "${POWERPC_OBJCOPY_EXECUTABLE}"
       -I binary -O elf32-powerpc -B powerpc:common
-      horizon_triangle.gsh horizon_triangle_gsh.o
+      horizon_block.gsh horizon_block_gsh.o
    DEPENDS "${GSH}"
    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
    COMMENT "Embedding the GFD shader file in the RPX"
