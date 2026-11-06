@@ -12,6 +12,7 @@ const BASE_Y: i32 = 64;
 const BLOCK_HEIGHTS: [i32; 9] = [1, 2, 1, 2, 3, 2, 1, 2, 1];
 const TRIANGLE_VERTICES: [usize; 6] = [0, 1, 2, 0, 2, 3];
 const FACE_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+const MAX_LIGHT_COORD: f32 = 240.0;
 
 fn atlas_uv(tile_x: u32, tile_y: u32, uv: [f32; 2]) -> [f32; 2] {
     let tile_origin = [
@@ -35,8 +36,19 @@ fn make_terrain_vertex(position: BlockPos, uv: [f32; 2], color: [f32; 3]) -> Ter
         uv,
         0,
         packed_color,
-        0,
+        0x00F0,
     )
+}
+
+/// Reduces Horizon's sky/block light coordinates to grayscale brightness.
+///
+/// Vanilla samples a colored, time-dependent lightmap. Until that texture and
+/// its frame inputs are transferred, use the brighter channel with a small
+/// ambient floor so dark sections remain visible.
+fn terrain_brightness(light: u16) -> f32 {
+    let sky = f32::from((light & 0x00FF).min(240)) / MAX_LIGHT_COORD;
+    let block = f32::from((light >> 8).min(240)) / MAX_LIGHT_COORD;
+    0.05 + 0.95 * sky.max(block)
 }
 
 fn write_gx2_vertex(
@@ -57,9 +69,10 @@ fn write_gx2_vertex(
         (x + z) * 0.10 - y * 0.25 + 0.40,
         0.5 + (x + z) * 0.015 - y * 0.025,
     ];
+    let brightness = terrain_brightness(terrain_vertex.light);
     let color = terrain_vertex
         .rgba()
-        .map(|component| f32::from(component) / 255.0);
+        .map(|component| f32::from(component) / 255.0 * brightness);
     let uv = terrain_vertex.uv();
     let base = index * 8;
 
@@ -270,8 +283,8 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        horizon_wiiu_build_block_section, horizon_wiiu_encode_terrain_quads, BLOCK_VERTEX_COUNT,
-        SECTION_VERTEX_COUNT,
+        horizon_wiiu_build_block_section, horizon_wiiu_encode_terrain_quads, terrain_brightness,
+        BLOCK_VERTEX_COUNT, SECTION_VERTEX_COUNT,
     };
     use horizon_terrain_data::TerrainVertex;
 
@@ -306,6 +319,14 @@ mod tests {
         assert_eq!(output[6], 1.0 / 16.0);
         assert_eq!(output[7], 1.0 / 16.0);
         assert!((output[8] - 0.215).abs() < 0.00001);
+    }
+
+    #[test]
+    fn captured_sky_and_block_light_control_vertex_brightness() {
+        assert!((terrain_brightness(0) - 0.05).abs() < f32::EPSILON);
+        assert!((terrain_brightness(0x00F0) - 1.0).abs() < f32::EPSILON);
+        assert!((terrain_brightness(0x8000) - (0.05 + 0.95 * 128.0 / 240.0)).abs() < 0.00001);
+        assert!((terrain_brightness(0x00F0 | 0x8000) - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
