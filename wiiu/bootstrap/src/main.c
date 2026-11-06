@@ -88,6 +88,11 @@ extern int32_t horizon_wiiu_world_init(const char *resources, int64_t seed,
 extern void *horizon_wiiu_world_generate_region(int32_t centerX, int32_t centerZ,
                                                  uint32_t radius, char *error,
                                                  uint32_t errorCapacity);
+extern int32_t horizon_wiiu_world_request_region(int32_t centerX, int32_t centerZ,
+                                                  uint32_t radius, char *error,
+                                                  uint32_t errorCapacity);
+extern int32_t horizon_wiiu_world_take_region_result(void **chunk, char *error,
+                                                      uint32_t errorCapacity);
 extern const HorizonTerrainVertex *horizon_wiiu_world_chunk_vertices(
    const void *chunk, uint32_t *vertexCount);
 extern const uint8_t *horizon_wiiu_world_terrain_atlas(void);
@@ -137,6 +142,11 @@ static uint32_t sBlockVertexCount;
 #ifdef HORIZON_WIIU_WORLDGEN
 static int sBlockInitFailure;
 static uint32_t sRegionReloadCooldown;
+#if HORIZON_WIIU_WORLD_REGION_RADIUS > 0
+static BOOL sRegionLoadPending;
+static int32_t sPendingRegionCenterX;
+static int32_t sPendingRegionCenterZ;
+#endif
 #endif
 static float sCameraX;
 static float sCameraY;
@@ -496,15 +506,11 @@ world_chunk_from_coordinate(float coordinate)
 }
 
 static BOOL
-replace_runtime_world_region(int32_t centerChunkX, int32_t centerChunkZ)
+install_runtime_world_region(void *newChunk, int32_t centerChunkX, int32_t centerChunkZ)
 {
-   char error[256] = {0};
-   void *newChunk = horizon_wiiu_world_generate_region(
-      centerChunkX, centerChunkZ, HORIZON_WIIU_WORLD_REGION_RADIUS,
-      error, sizeof(error));
    if (!newChunk) {
-      OSReport("HorizonWiiU: region reload (%d,%d) failed: %s\n",
-               centerChunkX, centerChunkZ, error);
+      OSReport("HorizonWiiU: region reload (%d,%d) returned no data\n",
+               centerChunkX, centerChunkZ);
       sRegionReloadCooldown = 120;
       return FALSE;
    }
@@ -568,6 +574,26 @@ static void
 stream_runtime_world_region(void)
 {
 #if HORIZON_WIIU_WORLD_REGION_RADIUS > 0
+   if (sRegionLoadPending) {
+      char error[256] = {0};
+      void *newChunk = NULL;
+      const int32_t result = horizon_wiiu_world_take_region_result(
+         &newChunk, error, sizeof(error));
+      if (result == 0) {
+         return;
+      }
+      sRegionLoadPending = FALSE;
+      if (result < 0 || !newChunk) {
+         OSReport("HorizonWiiU: region reload (%d,%d) failed: %s\n",
+                  sPendingRegionCenterX, sPendingRegionCenterZ, error);
+         sRegionReloadCooldown = 120;
+         return;
+      }
+      install_runtime_world_region(newChunk,
+                                   sPendingRegionCenterX, sPendingRegionCenterZ);
+      return;
+   }
+
    if (sRegionReloadCooldown != 0) {
       --sRegionReloadCooldown;
       return;
@@ -592,7 +618,23 @@ stream_runtime_world_region(void)
    const int32_t currentCenterZ = (int32_t)sSectionOrigin[2] / 16
                                   + HORIZON_WIIU_WORLD_REGION_RADIUS;
    if (centerChunkX != currentCenterX || centerChunkZ != currentCenterZ) {
-      replace_runtime_world_region(centerChunkX, centerChunkZ);
+      char error[256] = {0};
+      const int32_t requested = horizon_wiiu_world_request_region(
+         centerChunkX, centerChunkZ, HORIZON_WIIU_WORLD_REGION_RADIUS,
+         error, sizeof(error));
+      if (requested < 0) {
+         OSReport("HorizonWiiU: could not start region reload (%d,%d): %s\n",
+                  centerChunkX, centerChunkZ, error);
+         sRegionReloadCooldown = 120;
+      } else {
+         sRegionLoadPending = TRUE;
+         sPendingRegionCenterX = centerChunkX;
+         sPendingRegionCenterZ = centerChunkZ;
+         if (requested > 0) {
+            OSReport("HorizonWiiU: generating region around (%d,%d)\n",
+                     centerChunkX, centerChunkZ);
+         }
+      }
    }
 #endif
 }

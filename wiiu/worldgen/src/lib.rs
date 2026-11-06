@@ -18,6 +18,7 @@ use std::{
     path::Path,
     ptr,
     sync::{Mutex, OnceLock},
+    thread::{self, JoinHandle},
 };
 
 const SECTION_VOLUME: usize = 16 * 16 * 16;
@@ -184,9 +185,14 @@ struct WorldChunk {
 }
 
 static WORLD: OnceLock<Mutex<Option<WorldContext>>> = OnceLock::new();
+static PENDING_REGION: OnceLock<Mutex<Option<JoinHandle<Result<usize, String>>>>> = OnceLock::new();
 
 fn world() -> &'static Mutex<Option<WorldContext>> {
     WORLD.get_or_init(|| Mutex::new(None))
+}
+
+fn pending_region() -> &'static Mutex<Option<JoinHandle<Result<usize, String>>>> {
+    PENDING_REGION.get_or_init(|| Mutex::new(None))
 }
 
 const PROFILE_OVERWORLD: u32 = 0;
@@ -577,6 +583,107 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
         chunk_z: origin_z,
     }))
     .cast::<c_void>()
+}
+
+/// Start generating a region on Cafe std's native worker thread.
+/// Returns 1 when started, 0 when another region is pending, and -1 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_request_region(
+    center_x: i32,
+    center_z: i32,
+    radius: u32,
+    error_out: *mut c_char,
+    error_capacity: u32,
+) -> i32 {
+    let mut pending = pending_region()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if pending.is_some() {
+        return 0;
+    }
+
+    let worker = thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || {
+            let mut error = [0 as c_char; 256];
+            let chunk = horizon_wiiu_world_generate_region(
+                center_x,
+                center_z,
+                radius,
+                error.as_mut_ptr(),
+                error.len() as u32,
+            );
+            if chunk.is_null() {
+                // SAFETY: the synchronous generator writes a NUL-terminated error
+                // into this live, zero-initialized buffer when it fails.
+                let message = unsafe { CStr::from_ptr(error.as_ptr()) }
+                    .to_string_lossy()
+                    .into_owned();
+                Err(message)
+            } else {
+                Ok(chunk as usize)
+            }
+        });
+
+    match worker {
+        Ok(worker) => {
+            *pending = Some(worker);
+            1
+        }
+        Err(error) => {
+            copy_error(
+                &format!("could not start Horizon region worker: {error}"),
+                error_out,
+                error_capacity,
+            );
+            -1
+        }
+    }
+}
+
+/// Poll a background region request: 0 while running, 1 when complete, -1 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_take_region_result(
+    chunk_out: *mut *mut c_void,
+    error_out: *mut c_char,
+    error_capacity: u32,
+) -> i32 {
+    if chunk_out.is_null() {
+        copy_error("missing region result pointer", error_out, error_capacity);
+        return -1;
+    }
+    // SAFETY: the C caller provides one writable chunk pointer.
+    unsafe { chunk_out.write(ptr::null_mut()) };
+
+    let worker = {
+        let mut pending = pending_region()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !pending.as_ref().is_some_and(JoinHandle::is_finished) {
+            return 0;
+        }
+        pending.take()
+    };
+    let Some(worker) = worker else {
+        return 0;
+    };
+
+    match worker.join() {
+        Ok(Ok(chunk)) => {
+            // SAFETY: the integer is the pointer returned by the synchronous
+            // region generator, preserved only to cross Cafe's thread boundary.
+            unsafe { chunk_out.write(chunk as *mut c_void) };
+            1
+        }
+        Ok(Err(error)) => {
+            copy_error(&error, error_out, error_capacity);
+            -1
+        }
+        Err(_) => {
+            copy_error("Horizon region worker panicked", error_out, error_capacity);
+            -1
+        }
+    }
 }
 
 /// Borrow the generated chunk's Horizon vertex array until `free_chunk`.
