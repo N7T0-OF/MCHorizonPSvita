@@ -78,6 +78,7 @@ if(HORIZON_WIIU_CAPTURE_DIR)
          "${HORIZON_WIIU_CAPTURE_DIR}/sections.json"
          "${HORIZON_WIIU_CAPTURE_DIR}/sections.bin"
          "${HORIZON_WIIU_CAPTURE_DIR}/sprites.bin"
+         "${HORIZON_WIIU_CAPTURE_DIR}/lightmap.bin"
    COMMENT "Converting captured Horizon sections for GX2"
       VERBATIM
    )

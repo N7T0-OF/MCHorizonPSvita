@@ -28,6 +28,7 @@ def write_scene(root, camera, sprite_size=1, texture_layers=16):
         rgba = bytes((layer, layer + 1, layer + 2, 255))
         pixels.extend(rgba * sprite_size * sprite_size)
     (root / "sprites.bin").write_bytes(pixels)
+    (root / "lightmap.bin").write_bytes(bytes((255, 128, 64, 255)) * 16 * 16)
 
 
 class CaptureConversionTests(unittest.TestCase):
@@ -66,6 +67,8 @@ class CaptureConversionTests(unittest.TestCase):
             self.assertIn("0u, 4660u, 0xA1B2C3D4u", generated)
             self.assertIn("horizon_wiiu_capture_atlas_width = 3u", generated)
             self.assertIn("horizon_wiiu_capture_view[4]", generated)
+            self.assertIn("horizon_wiiu_capture_lightmap_pixels[1024]", generated)
+            self.assertIn("0xFFu, 0x80u, 0x40u, 0xFFu", generated)
             self.assertIn("0x07u, 0x08u, 0x09u, 0xFFu", generated)
 
             limited = capture.convert(root, root / "limited.c", max_vertices=4)

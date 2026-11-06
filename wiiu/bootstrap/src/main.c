@@ -28,6 +28,7 @@ typedef struct Vertex {
    float color[3];
    float uv[2];
    float alphaCutout;
+   float lightUv[2];
 } Vertex;
 
 typedef struct HorizonTerrainVertex {
@@ -63,6 +64,7 @@ extern const float horizon_wiiu_capture_section_origin[3];
 extern const uint8_t horizon_wiiu_capture_atlas_pixels[];
 extern const uint32_t horizon_wiiu_capture_atlas_width;
 extern const uint32_t horizon_wiiu_capture_atlas_height;
+extern const uint8_t horizon_wiiu_capture_lightmap_pixels[16 * 16 * 4];
 extern const float horizon_wiiu_capture_view[4];
 #endif
 
@@ -70,6 +72,8 @@ static WHBGfxShaderGroup sBlockShader;
 static GX2RBuffer sBlockBuffer;
 static GX2Texture sBlockAtlas;
 static GX2Sampler sBlockSampler;
+static GX2Texture sLightmap;
+static GX2Sampler sLightmapSampler;
 static const HorizonTerrainVertex *sBlockSection;
 static uint32_t sAtlasWidth;
 static uint32_t sAtlasHeight;
@@ -194,6 +198,54 @@ init_block_atlas(void)
 }
 
 static BOOL
+init_lightmap(void)
+{
+   memset(&sLightmap, 0, sizeof(sLightmap));
+   sLightmap.surface.use = GX2_SURFACE_USE_TEXTURE;
+   sLightmap.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
+   sLightmap.surface.width = 16;
+   sLightmap.surface.height = 16;
+   sLightmap.surface.depth = 1;
+   sLightmap.surface.mipLevels = 1;
+   sLightmap.surface.format = GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8;
+   sLightmap.surface.aa = GX2_AA_MODE1X;
+   sLightmap.surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
+   sLightmap.viewNumMips = 1;
+   sLightmap.viewNumSlices = 1;
+   sLightmap.compMap = 0U | (1U << 3) | (2U << 6) | (3U << 9);
+
+   const GX2RResourceFlags textureFlags = GX2R_RESOURCE_BIND_TEXTURE
+                                          | GX2R_RESOURCE_USAGE_CPU_WRITE
+                                          | GX2R_RESOURCE_USAGE_GPU_READ;
+   if (!GX2RCreateSurface(&sLightmap.surface, textureFlags)) {
+      return FALSE;
+   }
+
+   uint8_t *pixels = (uint8_t *)GX2RLockSurfaceEx(&sLightmap.surface, 0, textureFlags);
+   if (!pixels) {
+      GX2RDestroySurfaceEx(&sLightmap.surface, textureFlags);
+      memset(&sLightmap, 0, sizeof(sLightmap));
+      return FALSE;
+   }
+
+   const uint32_t pitch = sLightmap.surface.pitch;
+   for (uint32_t y = 0; y < 16; ++y) {
+#ifdef HORIZON_WIIU_CAPTURE
+      memcpy(pixels + (y * pitch * 4),
+             horizon_wiiu_capture_lightmap_pixels + (y * 16 * 4),
+             16 * 4);
+#else
+      memset(pixels + (y * pitch * 4), 0xFF, 16 * 4);
+#endif
+   }
+
+   GX2RUnlockSurfaceEx(&sLightmap.surface, 0, textureFlags);
+   GX2InitTextureRegs(&sLightmap);
+   GX2InitSampler(&sLightmapSampler, GX2_TEX_CLAMP_MODE_CLAMP, GX2_TEX_XY_FILTER_MODE_LINEAR);
+   return TRUE;
+}
+
+static BOOL
 init_block_mesh(void)
 {
    if (!WHBGfxLoadGFDShaderGroup(&sBlockShader, 0, _binary_horizon_block_gsh_start)) {
@@ -208,6 +260,8 @@ init_block_mesh(void)
                                      offsetof(Vertex, uv), GX2_ATTRIB_FORMAT_FLOAT_32_32)
        || !WHBGfxInitShaderAttribute(&sBlockShader, "aAlphaCutout", 0,
                                      offsetof(Vertex, alphaCutout), GX2_ATTRIB_FORMAT_FLOAT_32)
+       || !WHBGfxInitShaderAttribute(&sBlockShader, "aLightUv", 0,
+                                     offsetof(Vertex, lightUv), GX2_ATTRIB_FORMAT_FLOAT_32_32)
        || !WHBGfxInitFetchShader(&sBlockShader)) {
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
@@ -369,6 +423,18 @@ free_block_atlas(void)
 }
 
 static void
+free_lightmap(void)
+{
+   if (sLightmap.surface.image) {
+      const GX2RResourceFlags textureFlags = GX2R_RESOURCE_BIND_TEXTURE
+                                             | GX2R_RESOURCE_USAGE_CPU_WRITE
+                                             | GX2R_RESOURCE_USAGE_GPU_READ;
+      GX2RDestroySurfaceEx(&sLightmap.surface, textureFlags);
+      memset(&sLightmap, 0, sizeof(sLightmap));
+   }
+}
+
+static void
 draw_block_mesh(void)
 {
    GX2SetVertexShader(sBlockShader.vertexShader);
@@ -377,6 +443,8 @@ draw_block_mesh(void)
    GX2RSetAttributeBuffer(&sBlockBuffer, 0, sizeof(Vertex), 0);
    GX2SetPixelTexture(&sBlockAtlas, 0);
    GX2SetPixelSampler(&sBlockSampler, 0);
+   GX2SetPixelTexture(&sLightmap, 1);
+   GX2SetPixelSampler(&sLightmapSampler, 1);
    GX2SetDepthOnlyControl(TRUE, TRUE, GX2_COMPARE_FUNC_LEQUAL);
    GX2DrawEx(GX2_PRIMITIVE_MODE_TRIANGLES, sBlockVertexCount, 0, 1);
 }
@@ -408,11 +476,19 @@ main(int argc, char **argv)
       return 2;
    }
 
-   if (!init_block_mesh()) {
+   if (!init_lightmap()) {
       free_block_atlas();
       WHBGfxShutdown();
       WHBProcShutdown();
       return 3;
+   }
+
+   if (!init_block_mesh()) {
+      free_lightmap();
+      free_block_atlas();
+      WHBGfxShutdown();
+      WHBProcShutdown();
+      return 4;
    }
 
    uint32_t frame = 0;
@@ -439,6 +515,7 @@ main(int argc, char **argv)
    }
 
    free_block_mesh();
+   free_lightmap();
    free_block_atlas();
    WHBGfxShutdown();
    WHBProcShutdown();

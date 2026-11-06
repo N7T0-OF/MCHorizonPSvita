@@ -12,8 +12,7 @@ const BASE_Y: i32 = 64;
 const BLOCK_HEIGHTS: [i32; 9] = [1, 2, 1, 2, 3, 2, 1, 2, 1];
 const TRIANGLE_VERTICES: [usize; 6] = [0, 1, 2, 0, 2, 3];
 const FACE_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-const MAX_LIGHT_COORD: f32 = 240.0;
-const GX2_VERTEX_SCALARS: usize = 10;
+const GX2_VERTEX_SCALARS: usize = 12;
 const DEGREES_TO_RADIANS: f32 = core::f32::consts::PI / 180.0;
 
 #[derive(Clone, Copy)]
@@ -91,15 +90,12 @@ fn make_terrain_vertex(position: BlockPos, uv: [f32; 2], color: [f32; 3]) -> Ter
     )
 }
 
-/// Reduces Horizon's sky/block light coordinates to grayscale brightness.
-///
-/// Vanilla samples a colored, time-dependent lightmap. Until that texture and
-/// its frame inputs are transferred, use the brighter channel with a small
-/// ambient floor so dark sections remain visible.
-fn terrain_brightness(light: u16) -> f32 {
-    let sky = f32::from((light & 0x00FF).min(240)) / MAX_LIGHT_COORD;
-    let block = f32::from((light >> 8).min(240)) / MAX_LIGHT_COORD;
-    0.05 + 0.95 * sky.max(block)
+/// Maps Horizon's packed sky/block light to the captured 16x16 lightmap.
+fn terrain_light_uv(light: u16) -> [f32; 2] {
+    let sky = f32::from((light & 0x00FF).min(240));
+    let block = f32::from((light >> 8).min(240));
+    let texel_center = 0.5 / 16.0;
+    [block / 256.0 + texel_center, sky / 256.0 + texel_center]
 }
 
 fn write_gx2_vertex(
@@ -110,11 +106,11 @@ fn write_gx2_vertex(
     camera: Camera,
 ) {
     let projected = project_position(terrain_vertex.pos, section_origin, camera);
-    let brightness = terrain_brightness(terrain_vertex.light);
     let color = terrain_vertex
         .rgba()
-        .map(|component| f32::from(component) / 255.0 * brightness);
+        .map(|component| f32::from(component) / 255.0);
     let uv = terrain_vertex.uv();
+    let light_uv = terrain_light_uv(terrain_vertex.light);
     let base = index * GX2_VERTEX_SCALARS;
 
     vertices[base..base + 4].copy_from_slice(&projected);
@@ -125,6 +121,7 @@ fn write_gx2_vertex(
     } else {
         0.0
     };
+    vertices[base + 10..base + 12].copy_from_slice(&light_uv);
 }
 
 fn append_face(
@@ -367,7 +364,7 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 mod tests {
     use super::{
         horizon_wiiu_build_block_section, horizon_wiiu_camera_motion,
-        horizon_wiiu_encode_terrain_quads, project_position, terrain_brightness, Camera,
+        horizon_wiiu_encode_terrain_quads, project_position, terrain_light_uv, Camera,
         BLOCK_VERTEX_COUNT, GX2_VERTEX_SCALARS, SECTION_VERTEX_COUNT,
     };
     use horizon_terrain_data::TerrainVertex;
@@ -404,7 +401,9 @@ mod tests {
         assert_eq!(output[7], 1.0 / 16.0);
         assert_eq!(output[8], 1.0 / 16.0);
         assert_eq!(output[9], 1.0);
-        assert!((output[10] - 0.215).abs() < 0.00001);
+        assert!((output[10] - 1.0 / 32.0).abs() < 0.00001);
+        assert!((output[11] - 31.0 / 32.0).abs() < 0.00001);
+        assert!((output[12] - 0.215).abs() < 0.00001);
     }
 
     #[test]
@@ -466,11 +465,11 @@ mod tests {
     }
 
     #[test]
-    fn captured_sky_and_block_light_control_vertex_brightness() {
-        assert!((terrain_brightness(0) - 0.05).abs() < f32::EPSILON);
-        assert!((terrain_brightness(0x00F0) - 1.0).abs() < f32::EPSILON);
-        assert!((terrain_brightness(0x8000) - (0.05 + 0.95 * 128.0 / 240.0)).abs() < 0.00001);
-        assert!((terrain_brightness(0x00F0 | 0x8000) - 1.0).abs() < f32::EPSILON);
+    fn captured_sky_and_block_light_select_lightmap_coordinates() {
+        assert_eq!(terrain_light_uv(0), [1.0 / 32.0, 1.0 / 32.0]);
+        assert_eq!(terrain_light_uv(0x00F0), [1.0 / 32.0, 31.0 / 32.0]);
+        assert_eq!(terrain_light_uv(0x78F0), [0.5, 31.0 / 32.0]);
+        assert_eq!(terrain_light_uv(0xF0F0), [31.0 / 32.0, 31.0 / 32.0]);
     }
 
     #[test]

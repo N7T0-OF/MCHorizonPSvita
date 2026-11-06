@@ -16,6 +16,8 @@ import sys
 
 
 VERTEX_SIZE = 24
+LIGHTMAP_SIZE = 16
+LIGHTMAP_BYTES = LIGHTMAP_SIZE * LIGHTMAP_SIZE * 4
 DEFAULT_MAX_VERTICES = 65_536
 MAX_VERTICES = 4_000_000
 MAX_CAPTURE_SPRITES = 256
@@ -92,6 +94,11 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
 
     records = json.loads((capture_dir / "sections.json").read_text(encoding="utf-8"))
     scene = json.loads((capture_dir / "scene.json").read_text(encoding="utf-8"))
+    lightmap_pixels = (capture_dir / "lightmap.bin").read_bytes()
+    if len(lightmap_pixels) != LIGHTMAP_BYTES:
+        raise ValueError(
+            f"lightmap.bin has {len(lightmap_pixels)} bytes; expected {LIGHTMAP_BYTES}"
+        )
     camera = scene["frame"]["camera"]
     yaw = float(scene["frame"]["yaw"])
     pitch = float(scene["frame"]["pitch"])
@@ -207,6 +214,10 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
         "   " + ", ".join(f"0x{byte:02X}u" for byte in atlas_pixels[offset:offset + 16]) + ","
         for offset in range(0, len(atlas_pixels), 16)
     ]
+    lightmap_rows = [
+        "   " + ", ".join(f"0x{byte:02X}u" for byte in lightmap_pixels[offset:offset + 16]) + ","
+        for offset in range(0, len(lightmap_pixels), 16)
+    ]
     output.parent.mkdir(parents=True, exist_ok=True)
     contents = "\n".join(
         [
@@ -232,6 +243,9 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
             "};",
             f"const uint32_t horizon_wiiu_capture_atlas_width = {atlas_width}u;",
             f"const uint32_t horizon_wiiu_capture_atlas_height = {atlas_height}u;",
+            "const uint8_t horizon_wiiu_capture_lightmap_pixels[1024] = {",
+            *lightmap_rows,
+            "};",
             "const float horizon_wiiu_capture_view[4] = {",
             f"   {c_float(yaw)}, {c_float(pitch)}, {c_float(projection_scale)}, {c_float(aspect)}",
             "};",

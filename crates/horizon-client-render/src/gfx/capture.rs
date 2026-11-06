@@ -376,6 +376,7 @@ impl Renderer {
                 .map(|(key, mesh)| ([key.x, key.z, i32::from(key.level)], mesh)),
         )?;
         fs::write(dir.join("sprites.bin"), request.sprite_pixels.as_slice())?;
+        fs::write(dir.join("lightmap.bin"), self.lightmap_pixels.as_slice())?;
         fs::write(
             dir.join("celestial.bin"),
             bytemuck::cast_slice::<Vertex, u8>(frame.celestial),
