@@ -3,23 +3,39 @@
 //! This is not a playable game. Differential checks cover only the operations
 //! listed in docs/rust-parity.md; the rest of vanilla remains unimplemented.
 #![forbid(unsafe_code)]
+#![cfg_attr(feature = "wiiu-core", no_std)]
 
+#[cfg(not(feature = "wiiu-core"))]
 pub mod biome;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod carving;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod density;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod fast_hash;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod geometry;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod jmath;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod no_ai;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod noise;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod paletted;
 pub mod position;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod prepared_files;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod random;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod storage;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod text;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod ticks;
 
+#[cfg(not(feature = "wiiu-core"))]
 pub mod release;
 pub mod version;
 

@@ -20,6 +20,10 @@ add_custom_command(
       .cargo/config.toml
       .cafe/powerpc-cafe-nintendo.json
       .cafe/linker.ld
+      ../../crates/horizon-core/Cargo.toml
+      ../../crates/horizon-core/src/lib.rs
+      ../../crates/horizon-core/src/position.rs
+      ../../crates/horizon-core/src/version.rs
       src/lib.rs
    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
    COMMENT "Building the Rust CafeOS application library"

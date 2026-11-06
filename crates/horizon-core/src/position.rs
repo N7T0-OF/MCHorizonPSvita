@@ -1,5 +1,7 @@
 //! Integer coordinates and vanilla's packed position formats.
+#[cfg(not(feature = "wiiu-core"))]
 mod iter;
+#[cfg(not(feature = "wiiu-core"))]
 pub use iter::{BlockBoxIter, BlockIterationTooLarge};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

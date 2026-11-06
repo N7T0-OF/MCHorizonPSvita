@@ -9,6 +9,8 @@ description = "Horizon simulation foundations for the pinned vanilla Java Editio
 [features]
 # Records the call sites of LegacyRandom draws (mob AI parity debugging).
 rng-trace = []
+# Builds the no_std coordinate subset needed by embedded frontends.
+wiiu-core = []
 
 [dependencies]
 libm = "=0.2.16"

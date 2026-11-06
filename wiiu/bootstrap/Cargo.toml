@@ -7,4 +7,7 @@ publish = false
 [lib]
 crate-type = ["staticlib"]
 
+[dependencies]
+horizon-core = { path = "../../crates/horizon-core", default-features = false, features = ["wiiu-core"] }
+
 [workspace]
