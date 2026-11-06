@@ -16,11 +16,10 @@
 #include <whb/proc.h>
 
 extern void horizon_wiiu_frame_color(uint32_t frame, float rgba[4]);
-extern uint32_t horizon_wiiu_build_block_mesh(float *vertices, uint32_t capacity,
-                                               float camera_x, float camera_z);
 extern const uint8_t _binary_horizon_block_gsh_start[];
 
 #define BLOCK_VERTEX_COUNT 414
+#define SECTION_VERTEX_COUNT 276
 #define ATLAS_TILE_SIZE 4
 #define ATLAS_SIZE (ATLAS_TILE_SIZE * 2)
 
@@ -30,10 +29,34 @@ typedef struct Vertex {
    float uv[2];
 } Vertex;
 
+typedef struct HorizonTerrainVertex {
+   float position[3];
+   uint16_t uv[2];
+   uint16_t layer;
+   uint16_t light;
+   uint32_t color;
+} HorizonTerrainVertex;
+
+_Static_assert(sizeof(HorizonTerrainVertex) == 24, "Horizon TerrainVertex ABI must stay 24 bytes");
+
+extern uint32_t horizon_wiiu_build_block_section(HorizonTerrainVertex *vertices,
+                                                  uint32_t capacity);
+extern uint32_t horizon_wiiu_encode_terrain_quads(const HorizonTerrainVertex *source,
+                                                   uint32_t source_vertex_count,
+                                                   float *output,
+                                                   uint32_t output_capacity,
+                                                   float section_x,
+                                                   float section_y,
+                                                   float section_z,
+                                                   float camera_x,
+                                                   float camera_z);
+
 static WHBGfxShaderGroup sBlockShader;
 static GX2RBuffer sBlockBuffer;
 static GX2Texture sBlockAtlas;
 static GX2Sampler sBlockSampler;
+static HorizonTerrainVertex sBlockSection[SECTION_VERTEX_COUNT];
+static uint32_t sBlockSectionVertexCount;
 static uint32_t sBlockVertexCount;
 static float sCameraX;
 static float sCameraZ;
@@ -156,6 +179,14 @@ init_block_mesh(void)
       return FALSE;
    }
 
+   sBlockSectionVertexCount = horizon_wiiu_build_block_section(sBlockSection,
+                                                                SECTION_VERTEX_COUNT);
+   if (sBlockSectionVertexCount == 0 || sBlockSectionVertexCount > SECTION_VERTEX_COUNT) {
+      GX2RDestroyBufferEx(&sBlockBuffer, sBlockBuffer.flags);
+      WHBGfxFreeShaderGroup(&sBlockShader);
+      return FALSE;
+   }
+
    return TRUE;
 }
 
@@ -207,10 +238,15 @@ update_block_mesh(void)
       return FALSE;
    }
 
-   uint32_t vertexCount = horizon_wiiu_build_block_mesh((float *)buffer,
-                                                         BLOCK_VERTEX_COUNT,
-                                                         sCameraX,
-                                                         sCameraZ);
+   uint32_t vertexCount = horizon_wiiu_encode_terrain_quads(sBlockSection,
+                                                             sBlockSectionVertexCount,
+                                                             (float *)buffer,
+                                                             BLOCK_VERTEX_COUNT,
+                                                             -1.0f,
+                                                             64.0f,
+                                                             -1.0f,
+                                                             sCameraX,
+                                                             sCameraZ);
    GX2RUnlockBufferEx(&sBlockBuffer, 0);
    if (vertexCount == 0 || vertexCount > BLOCK_VERTEX_COUNT) {
       return FALSE;
