@@ -15,6 +15,28 @@ fi
 
 mkdir -p "${BUILD_DIR}"
 
+WORLDGEN_STATICLIB=""
+if [[ "${HORIZON_WIIU_WORLDGEN:-0}" == "1" ]]; then
+   if [[ -z "${HORIZON_WIIU_STD_RUSTC:-}" || ! -x "${HORIZON_WIIU_STD_RUSTC}" ]]; then
+      printf 'Set HORIZON_WIIU_STD_RUSTC to the Cafe stage-1 rustc built from rust-wiiu/rust.\n' >&2
+      exit 1
+   fi
+   WORLDGEN_CARGO_TARGET_DIR="${HORIZON_WIIU_WORLDGEN_TARGET_DIR:-${BUILD_DIR}/worldgen-rust-target}"
+   (
+      cd "${SCRIPT_DIR}/../worldgen"
+      CARGO_TARGET_DIR="${WORLDGEN_CARGO_TARGET_DIR}" \
+         RUSTC="${HORIZON_WIIU_STD_RUSTC}" \
+         cargo +nightly build --release --lib --jobs "$(nproc)" \
+            --manifest-path "${SCRIPT_DIR}/../worldgen/Cargo.toml" \
+            --target powerpc-nintendo-cafe
+   )
+   WORLDGEN_STATICLIB="${WORLDGEN_CARGO_TARGET_DIR}/powerpc-nintendo-cafe/release/libhorizon_wiiu_worldgen.a"
+   if [[ ! -f "${WORLDGEN_STATICLIB}" ]]; then
+      printf 'Cafe worldgen static library was not produced: %s\n' "${WORLDGEN_STATICLIB}" >&2
+      exit 1
+   fi
+fi
+
 if [[ -n "${CAFEGLSL_ROOT:-}" ]]; then
    if [[ ! -x "${CAFEGLSL_ROOT}/bin/glslcompiler" ]]; then
       printf 'CAFEGLSL_ROOT is set but bin/glslcompiler is missing: %s\n' "${CAFEGLSL_ROOT}" >&2
@@ -36,11 +58,18 @@ else
 fi
 
 export PATH="${CAFEGLSL_ROOT}/bin:${PATH}"
+LINKER_FLAGS_ARGS=()
+if [[ -n "${HORIZON_WIIU_LINKER_FLAGS:-}" ]]; then
+   LINKER_FLAGS_ARGS+=("-DCMAKE_EXE_LINKER_FLAGS=${HORIZON_WIIU_LINKER_FLAGS}")
+fi
 powerpc-eabi-cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" -G Ninja \
    -DCMAKE_BUILD_TYPE=Release \
    -DHORIZON_WIIU_CAPTURE_DIR="${HORIZON_WIIU_CAPTURE_DIR:-}" \
    -DHORIZON_WIIU_CAPTURE_MAX_VERTICES="${HORIZON_WIIU_CAPTURE_MAX_VERTICES:-65536}" \
-   -DCAFEGLSL_COMPILER_EXECUTABLE="${CAFEGLSL_ROOT}/bin/glslcompiler"
+   -DHORIZON_WIIU_WORLDGEN="$([[ "${HORIZON_WIIU_WORLDGEN:-0}" == "1" ]] && echo ON || echo OFF)" \
+   -DHORIZON_WIIU_WORLDGEN_STATICLIB="${WORLDGEN_STATICLIB}" \
+   -DCAFEGLSL_COMPILER_EXECUTABLE="${CAFEGLSL_ROOT}/bin/glslcompiler" \
+   "${LINKER_FLAGS_ARGS[@]}"
 cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 
 printf 'RPX: %s\n' "${BUILD_DIR}/horizon_wiiu_bootstrap.rpx"

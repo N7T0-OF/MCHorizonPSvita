@@ -7,9 +7,14 @@ publish = false
 [lib]
 crate-type = ["staticlib"]
 
+[features]
+default = ["runtime-demo"]
+runtime-demo = ["dep:horizon-core"]
+wiiu-worldgen-render = []
+
 [dependencies]
 libm = "=0.2.16"
-horizon-core = { path = "../../crates/horizon-core", default-features = false, features = ["wiiu-core"] }
+horizon-core = { path = "../../crates/horizon-core", default-features = false, features = ["wiiu-core"], optional = true }
 horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
 
 [workspace]

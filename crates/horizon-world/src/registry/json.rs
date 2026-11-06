@@ -3,7 +3,7 @@ use super::{BlockRegistry, BlockStateId};
 use crate::compression::invalid;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeSet, HashMap},
     io,
 };
 
@@ -12,24 +12,66 @@ use std::{
 pub struct BlockStateJsonCodec<'a> {
     registry: &'a BlockRegistry,
     integers: BTreeSet<(String, String)>,
-    counts: BTreeMap<String, usize>,
+    counts: HashMap<&'a str, usize>,
 }
 impl<'a> BlockStateJsonCodec<'a> {
     pub fn new(
         registry: &'a BlockRegistry,
         integers: BTreeSet<(String, String)>,
     ) -> io::Result<Self> {
-        for (block, property) in &integers {
-            let state = registry
-                .default_state(block)
-                .and_then(|id| registry.state(id));
-            if !state.is_some_and(|state| state.properties.contains_key(property)) {
-                return Err(invalid("integer property is absent from block registry"));
+        Self::with_validation(registry, integers, true)
+    }
+
+    /// The Cafe worldgen table derives integer properties directly from this
+    /// same immutable registry, so validating every derived pair again only
+    /// repeats work at startup.
+    #[cfg(feature = "cafe-terrain-only")]
+    pub(crate) fn new_for_cafe_terrain(
+        registry: &'a BlockRegistry,
+        integers: BTreeSet<(String, String)>,
+    ) -> Self {
+        Self::with_validation(registry, integers, false)
+            .expect("trusted registry-derived integer properties")
+    }
+
+    fn with_validation(
+        registry: &'a BlockRegistry,
+        integers: BTreeSet<(String, String)>,
+        validate: bool,
+    ) -> io::Result<Self> {
+        if validate {
+            for (block, property) in &integers {
+                let state = registry
+                    .default_state(block)
+                    .and_then(|id| registry.state(id));
+                if !state.is_some_and(|state| state.properties.contains_key(property)) {
+                    return Err(invalid("integer property is absent from block registry"));
+                }
             }
+        } else {
         }
-        let mut counts = BTreeMap::new();
-        for state in &registry.states {
-            *counts.entry(state.name.clone()).or_insert(0) += 1;
+        // Registry facts keep each block's states together. Count those runs
+        // first so the common path hashes each block once, rather than once
+        // for all 35k state IDs. The fallback preserves the codec for arbitrary
+        // registries whose IDs interleave block names.
+        let mut counts = HashMap::with_capacity(registry.defaults.len());
+        let mut index = 0;
+        let mut runs = 0;
+        while index < registry.states.len() {
+            let name = registry.states[index].name.as_str();
+            let start = index;
+            index += 1;
+            while index < registry.states.len() && registry.states[index].name == name {
+                index += 1;
+            }
+            counts.insert(name, index - start);
+            runs += 1;
+        }
+        if runs != registry.defaults.len() {
+            counts.clear();
+            for state in &registry.states {
+                *counts.entry(state.name.as_str()).or_insert(0) += 1;
+            }
         }
         Ok(Self {
             registry,
@@ -94,7 +136,7 @@ impl<'a> BlockStateJsonCodec<'a> {
             .ok_or_else(|| invalid("unknown block state ID"))?;
         let value = if !full && self.registry.default_state(&state.name) == Some(id) {
             Value::String(state.name.clone())
-        } else if self.counts[&state.name] == 1 {
+        } else if self.counts.get(state.name.as_str()) == Some(&1) {
             serde_json::json!({"id":state.name})
         } else {
             serde_json::json!({"id":state.name,"properties":state.properties})

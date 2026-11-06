@@ -6,16 +6,30 @@ find_program(POWERPC_OBJCOPY_EXECUTABLE powerpc-eabi-objcopy REQUIRED)
 find_program(CAFEGLSL_COMPILER_EXECUTABLE glslcompiler REQUIRED)
 set(HORIZON_WIIU_CAPTURE_DIR "" CACHE PATH "Horizon render-capture directory; empty uses the fixture scene")
 set(HORIZON_WIIU_CAPTURE_MAX_VERTICES 65536 CACHE STRING "Maximum captured solid vertices converted for GX2")
+option(HORIZON_WIIU_WORLDGEN "Use Horizon's Cafe-std world generator at runtime" OFF)
+set(HORIZON_WIIU_WORLDGEN_STATICLIB "" CACHE FILEPATH "Cafe-std Horizon worldgen static library")
+
+if(HORIZON_WIIU_WORLDGEN AND HORIZON_WIIU_CAPTURE_DIR)
+   message(FATAL_ERROR "Select either HORIZON_WIIU_WORLDGEN or HORIZON_WIIU_CAPTURE_DIR")
+endif()
+if(HORIZON_WIIU_WORLDGEN AND NOT EXISTS "${HORIZON_WIIU_WORLDGEN_STATICLIB}")
+   message(FATAL_ERROR "HORIZON_WIIU_WORLDGEN_STATICLIB must name the Cafe worldgen archive")
+endif()
 
 set(RUST_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rust-target")
 set(RUST_TARGET_NAME "powerpc-cafe-nintendo")
 set(RUST_STATICLIB "${RUST_TARGET_DIR}/${RUST_TARGET_NAME}/release/libhorizon_wiiu_bootstrap.a")
+set(RUST_FEATURE_ARGS)
+if(HORIZON_WIIU_WORLDGEN)
+   set(RUST_FEATURE_ARGS --no-default-features --features wiiu-worldgen-render)
+endif()
 
 add_custom_command(
    OUTPUT "${RUST_STATICLIB}"
    COMMAND "${CMAKE_COMMAND}" -E env
       "CARGO_TARGET_DIR=${RUST_TARGET_DIR}"
-      "${CARGO_EXECUTABLE}" +nightly build --release --lib --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+      "${CARGO_EXECUTABLE}" +nightly build --release --lib ${RUST_FEATURE_ARGS}
+         --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
    DEPENDS
       Cargo.toml
       rust-toolchain.toml
@@ -88,9 +102,18 @@ add_executable(horizon_wiiu_bootstrap src/main.c "${GSH_OBJECT}" "${HORIZON_WIIU
 if(HORIZON_WIIU_CAPTURE_SOURCE)
    target_compile_definitions(horizon_wiiu_bootstrap PRIVATE HORIZON_WIIU_CAPTURE=1)
 endif()
+if(HORIZON_WIIU_WORLDGEN)
+   add_library(horizon_wiiu_worldgen STATIC IMPORTED GLOBAL)
+   set_target_properties(horizon_wiiu_worldgen PROPERTIES IMPORTED_LOCATION "${HORIZON_WIIU_WORLDGEN_STATICLIB}")
+   target_compile_definitions(horizon_wiiu_bootstrap PRIVATE HORIZON_WIIU_WORLDGEN=1)
+   target_link_options(horizon_wiiu_bootstrap PRIVATE "LINKER:--defsym=__end__=ADDR(.bss)+SIZEOF(.bss)")
+endif()
 add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_rust)
 add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_shaders)
 target_link_libraries(horizon_wiiu_bootstrap PRIVATE horizon_wiiu_rustlib)
+if(HORIZON_WIIU_WORLDGEN)
+   target_link_libraries(horizon_wiiu_bootstrap PRIVATE horizon_wiiu_worldgen)
+endif()
 
 set(PACKAGE_ELF "${CMAKE_CURRENT_BINARY_DIR}/horizon_wiiu_bootstrap.package.elf")
 set(RPX "${CMAKE_CURRENT_BINARY_DIR}/horizon_wiiu_bootstrap.rpx")

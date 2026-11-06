@@ -13,6 +13,27 @@ Porting Horizon 26.3 to the Nintendo Wii U. Horizon source is kept at the reposi
 
 ## Build and emulator results
 
+### Horizon runtime worldgen update (2026-11-06)
+
+- The Cafe-`std` bridge lives under `wiiu/worldgen` and links Horizon's actual `horizon-world` generator into the existing WUT/GX2 executable. The FFI accepts profile `0` for full Overworld generation or `1` for Horizon's `OverworldGenerator::flat`; the bootstrap selects profile `1` for a fast runtime demo.
+- Host probe results with the prepared 26.3 resources and seed `12345`: Overworld spawn `(103,-28)`, chunk `(6,-2)`, 60,368 mesh vertices, surface Y `128..136`; superflat same spawn/chunk, 3,072 mesh vertices, surface Y `-60`.
+- Cemu 2.6 loaded the superflat RPX (latest module checksum `0x18d80613`). The Cafe status log recorded `chunk meshed: 6,-2 vertices=3072 surface_y=-60..-60`; after removing the initialization probe exit, Cemu kept the title active in its frame loop. The test window was hidden and no screenshot was captured, so visible terrain is not yet confirmed.
+- A full Overworld Cemu run reached chunk generation but remained CPU-bound there for over five minutes without returning a proto-chunk; it was stopped. No menu or full gameplay loop exists yet, and there is no real-hardware test.
+
+The latest Horizon-worldgen build used WSL Ubuntu:
+
+```sh
+cd /mnt/c/dev/personal/HorizonWiiU/wiiu/bootstrap
+CAFEGLSL_ROOT=/home/ben/HorizonWiiU-toolchain/build-worldgen/deps/cafeglsl-1.0.0-rc1-linux-x86_64 \
+HORIZON_WIIU_WORLDGEN=1 \
+HORIZON_WIIU_STD_RUSTC=/home/ben/HorizonWiiU-toolchain/rust-wiiu-cafe/build/host/stage1/bin/rustc \
+HORIZON_WIIU_WORLDGEN_TARGET_DIR=/home/ben/HorizonWiiU-toolchain/worldgen-cafe-inline \
+HORIZON_WIIU_BUILD_DIR=/home/ben/HorizonWiiU-toolchain/build-worldgen-inline \
+  bash build.sh
+```
+
+The focused host probe is `CARGO_TARGET_DIR=/home/ben/HorizonWiiU-toolchain/worldgen-host-inline cargo +nightly run --manifest-path wiiu/worldgen/Cargo.toml --example world_probe -- /home/ben/HorizonWiiU-worldgen/resources 12345 flat` (`overworld` selects the full terrain path). The reachable-rule behavior test passed with `cargo +nightly test -p horizon-world worldgen::material_condition::library::tests::forward_rule_holders_and_invalid_graphs_are_atomic -- --exact`.
+
 The GX2 terrain quad-adapter build completed from WSL Ubuntu with:
 
 ```sh
@@ -97,6 +118,7 @@ Build directory: `/tmp/horizonwiiu-lightmap-real` for the real Horizon capture a
 ## Architecture decisions
 
 - Keep Horizon's source and gameplay/data crates identifiable and isolate Wii U code under `wiiu/`.
+- Keep Wii U compatibility and loading optimizations behind the opt-in `cafe-terrain-only` feature. The bootstrap uses Horizon's real superflat generator for the live Cemu path; its full Overworld path remains available and host-verified but is too slow in Cemu to use synchronously.
 - Do not try to run `wgpu` directly on GX2. `gx2gl` is an OpenGL 3.3 translation layer, not a `wgpu` backend; using it would still require a renderer and shader/resource adaptation.
 - Keep the CafeOS entry point in WUT C and application logic in Rust. Rust now builds one seeded 16×16×32 runtime chunk, exports its height map, and emits exposed faces using Horizon's shared `TerrainVertex`. The embedded build reuses Horizon's `LegacyRandom` and `PerlinNoise` implementations but has a small Wii U-specific block/material adapter; it does not run `horizon-world` generation or claim vanilla terrain parity. An alignment-aware `GlobalAlloc` implementation uses WUT/newlib `malloc` and `free` for Horizon's `alloc` APIs. The GX2 adapter expands each quad to six vertices and converts position, sprite UV, lightmap UV, and packed RGBA color. C polls VPAD, uploads through GX2R, binds the placeholder atlas and lightmap, enables depth testing, and follows the generated height map at 1.62 blocks eye height. The current movement is chunk-bounded horizontal walking without jumping or full block collision. Capture builds use Horizon's camera rotation and FOV with the same zero-to-one clip depth used by Horizon's `wgpu` projection; the right stick updates yaw and pitch. Captured sections are rebased to a shared camera-relative origin, converted into C numeric constants for target ABI layout, and rendered with the captured sprite atlas/lightmap. No desktop `wgpu` code is linked. Translucent meshes remain unsupported. WUT's `WHBGfxClearColor` clears color and depth for TV/GamePad ([implementation](https://github.com/devkitPro/wut/blob/master/libraries/libwhb/src/gfx.c)). `horizon-terrain-data` is `no_std`; the full `SectionMesh` and asset-driven client mesher remain in `horizon-client-render`, which depends on `std` and desktop libraries. GCC 16 emits a zero-size `.note.GNU-stack` marker that `elf2rpl` rejects, so packaging strips that non-runtime marker from a copy of the ELF first.
 - Adapt the UWP `PresentationBackend` / `TerrainBackend` pattern to a GX2 backend that consumes Horizon CPU `SectionMesh` and frame data. The full desktop client remains coupled to `wgpu` and desktop window/input/audio dependencies and cannot be cross-compiled unchanged.
@@ -105,7 +127,7 @@ Build directory: `/tmp/horizonwiiu-lightmap-real` for the real Horizon capture a
 
 ## Next steps
 
-1. Validate the `powerpc-nintendo-cafe` stage-1 toolchain, then cross-compile Horizon's real `GeneratorData::load` / `OverworldGenerator::worker().generate_proto` path with a legally supplied 26.3 worldgen bundle and block registry.
-2. Feed `ProtoChunk::section_states` into a Wii U voxel mesher using real registry state/material mappings, then replace the current single chunk with neighboring chunk load/unload around the player.
-3. Add block collision, vertical movement, block interaction, and save/load; configure Cemu input and visually verify the current camera/world before claiming those features.
-4. After runtime world generation, update lighting from world state and add the translucent pass. Keep Cemu and real-hardware results distinct.
+1. Capture a Cemu screenshot of the live superflat frame loop and verify GamePad camera movement through a repeatable CLI path if available.
+2. Use `GeneratorWorker::stage_timings()` on full Overworld generation, optimize the expensive stages, and move chunk generation off the render thread.
+3. Stream neighboring Horizon proto-chunks around the player and add vertical movement and terrain collisions.
+4. Add block interaction, saving, and then HUD/menu integration; keep Cemu and real-hardware results distinct.

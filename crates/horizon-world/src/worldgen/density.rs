@@ -70,6 +70,31 @@ impl DensityRegistry {
         noises: &BTreeMap<String, String>,
         densities: &BTreeMap<String, String>,
     ) -> Result<Self, DecodeError> {
+        Self::from_json_with_order(noises, densities, None, None)
+    }
+
+    /// The prepared Cafe terrain bundle supplies sorted key lists alongside
+    /// its maps. Use those vectors for traversal while retaining map lookups
+    /// for density references, avoiding the target's slow tree-map iterator.
+    #[cfg(feature = "cafe-terrain-only")]
+    pub fn from_cafe_terrain_bundle(
+        noises: &BTreeMap<String, String>,
+        densities: &BTreeMap<String, String>,
+        noise_order: &[String],
+        density_order: &[String],
+    ) -> Result<Self, DecodeError> {
+        if noise_order.len() != noises.len() || density_order.len() != densities.len() {
+            return Err(DecodeError::Field("Cafe terrain density bundle keys"));
+        }
+        Self::from_json_with_order(noises, densities, Some(noise_order), Some(density_order))
+    }
+
+    fn from_json_with_order(
+        noises: &BTreeMap<String, String>,
+        densities: &BTreeMap<String, String>,
+        noise_order: Option<&[String]>,
+        density_order: Option<&[String]>,
+    ) -> Result<Self, DecodeError> {
         let mut loader = Loader {
             graph: DensityGraph::new(),
             noises: BTreeMap::new(),
@@ -77,14 +102,36 @@ impl DensityRegistry {
             values: BTreeMap::new(),
             active: BTreeSet::new(),
         };
-        for (name, json) in noises {
+        let noise_entries = match noise_order {
+            Some(order) => order
+                .iter()
+                .map(|name| {
+                    noises
+                        .get_key_value(name)
+                        .ok_or(DecodeError::Field("missing Cafe terrain noise"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            None => noises.iter().collect(),
+        };
+        for (name, json) in noise_entries {
             let name = identifier(name)?;
             let noise = loader
                 .graph
                 .register_noise(name.clone(), decode_noise(json)?)?;
             loader.noises.insert(name, noise);
         }
-        for (name, json) in densities {
+        let density_entries = match density_order {
+            Some(order) => order
+                .iter()
+                .map(|name| {
+                    densities
+                        .get_key_value(name)
+                        .ok_or(DecodeError::Field("missing Cafe terrain density"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            None => densities.iter().collect(),
+        };
+        for (name, json) in density_entries {
             let name = identifier(name)?;
             let raw: Box<RawValue> = serde_json::from_str(json)?;
             if loader.definitions.insert(name.clone(), raw).is_some() {
@@ -93,7 +140,13 @@ impl DensityRegistry {
                 )));
             }
         }
-        let names: Vec<_> = loader.definitions.keys().cloned().collect();
+        let names = density_order.map_or_else(
+            || loader.definitions.keys().cloned().collect(),
+            <[String]>::to_vec,
+        );
+        if names.len() != loader.definitions.len() {
+            return Err(DecodeError::Field("Cafe terrain density identifiers"));
+        }
         for name in names {
             loader.resolve(&name, 0)?;
         }

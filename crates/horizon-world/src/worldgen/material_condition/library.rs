@@ -49,22 +49,65 @@ impl MaterialRuleLibrary {
         definitions: &BTreeMap<String, String>,
         conditions: &MaterialConditionRegistry,
         blocks: &BlockStateJsonCodec<'_>,
+        densities: DensityRegistry,
+        seed: i64,
+        legacy: bool,
+    ) -> Result<Self, DecodeError> {
+        Self::from_json_inner(
+            definitions,
+            conditions,
+            blocks,
+            densities,
+            seed,
+            legacy,
+            None,
+        )
+    }
+    /// Load only the rule graph reachable from `root`. This is useful to
+    /// generate terrain for one configured dimension without decoding and
+    /// compiling unrelated biome, ore, or dimension rules.
+    pub fn from_json_reachable(
+        definitions: &BTreeMap<String, String>,
+        conditions: &MaterialConditionRegistry,
+        blocks: &BlockStateJsonCodec<'_>,
+        densities: DensityRegistry,
+        seed: i64,
+        legacy: bool,
+        root: &str,
+    ) -> Result<Self, DecodeError> {
+        Self::from_json_inner(
+            definitions,
+            conditions,
+            blocks,
+            densities,
+            seed,
+            legacy,
+            Some(root),
+        )
+    }
+    fn from_json_inner(
+        definitions: &BTreeMap<String, String>,
+        conditions: &MaterialConditionRegistry,
+        blocks: &BlockStateJsonCodec<'_>,
         mut densities: DensityRegistry,
         seed: i64,
         legacy: bool,
+        root: Option<&str>,
     ) -> Result<Self, DecodeError> {
         if definitions.len() > 8192 {
             return Err(DecodeError::Field("material rule registry size"));
         }
         let mut raw = BTreeMap::new();
-        for (name, json) in definitions {
-            let value: Box<RawValue> = serde_json::from_str(json)?;
-            if raw.insert(identifier(name)?, value).is_some() {
-                return Err(DecodeError::Field("duplicate material rule"));
+        if root.is_none() {
+            for (name, json) in definitions {
+                if raw.insert(identifier(name)?, json.clone()).is_some() {
+                    return Err(DecodeError::Field("duplicate material rule"));
+                }
             }
         }
         let mut loader = Loader {
             raw,
+            source: definitions,
             values: BTreeMap::new(),
             active: BTreeSet::new(),
             conditions,
@@ -72,7 +115,11 @@ impl MaterialRuleLibrary {
             roots: Vec::new(),
             nodes: 0,
         };
-        for name in loader.raw.keys().cloned().collect::<Vec<_>>() {
+        let names = match root {
+            Some(root) => vec![identifier(root)?],
+            None => loader.raw.keys().cloned().collect::<Vec<_>>(),
+        };
+        for name in names {
             loader.resolve(&name, 0)?;
         }
         let roots = densities
@@ -170,7 +217,8 @@ impl MaterialRuleLibrary {
     }
 }
 struct Loader<'a, 'b> {
-    raw: BTreeMap<String, Box<RawValue>>,
+    raw: BTreeMap<String, String>,
+    source: &'a BTreeMap<String, String>,
     values: BTreeMap<String, Arc<Definition>>,
     active: BTreeSet<String>,
     conditions: &'a MaterialConditionRegistry,
@@ -189,11 +237,19 @@ impl Loader<'_, '_> {
         if !self.active.insert(name.to_owned()) {
             return Err(DecodeError::Field("cyclic material rule"));
         }
-        let raw = self
+        let json = self
             .raw
             .get(name)
-            .ok_or(DecodeError::Field("missing material rule"))?
-            .clone();
+            .cloned()
+            .or_else(|| {
+                self.source.get(name).cloned().or_else(|| {
+                    self.source.iter().find_map(|(key, value)| {
+                        (identifier(key).ok().as_deref() == Some(name)).then(|| value.clone())
+                    })
+                })
+            })
+            .ok_or(DecodeError::Field("missing material rule"))?;
+        let raw: Box<RawValue> = serde_json::from_str(&json)?;
         if !raw.get().starts_with('{') {
             return Err(DecodeError::Field(
                 "material rule definition must be direct",
@@ -335,6 +391,22 @@ mod tests {
                 false,
             )
         };
+        let mut with_unreachable = definitions.clone();
+        with_unreachable.insert("horizon:unused".to_owned(), "{".to_owned());
+        let mut reachable = MaterialRuleLibrary::from_json_reachable(
+            &with_unreachable,
+            &conditions,
+            &blocks,
+            DensityRegistry::from_json(&BTreeMap::new(), &BTreeMap::new()).unwrap(),
+            0,
+            false,
+            "horizon:a",
+        )
+        .unwrap();
+        assert!(reachable.rule("horizon:a").is_ok());
+        assert!(!reachable.names().any(|name| name == "horizon:unused"));
+        assert!(load(&with_unreachable).is_err());
+
         let mut valid = load(&definitions).unwrap();
         for bad in [
             r#"{"type":"condition","if_true":{"type":"hole"},"then_run":"horizon:a"}"#,

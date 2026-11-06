@@ -7,6 +7,10 @@
 //! aquifers, material surface, carvers) and primes the post-terrain heightmaps.
 //! `decorate` runs the FEATURES status for the center of a 3×3 neighborhood with
 //! whatever feature algorithms are implemented; structures are not generated.
+#[cfg(not(feature = "cafe-terrain-only"))]
+use super::tags::TagDefinitions;
+#[cfg(feature = "cafe-terrain-only")]
+use super::tags::TagFile;
 use super::{
     DecodeError,
     anchor::WorldGenerationContext,
@@ -35,7 +39,6 @@ use super::{
     router::{NoiseRouter, RouterField, RouterSamplers},
     settings::NoiseSettings,
     spawn_finder::{SpawnTargetPoint, find_spawn_position},
-    tags::TagDefinitions,
     terrain::{PreLightChunkStage, TerrainAquifer, TerrainBlockStates, TerrainChunk, fill_noise},
 };
 use crate::{
@@ -167,6 +170,10 @@ pub struct GeneratorData {
     integers: BTreeSet<(String, String)>,
     noises: BTreeMap<String, String>,
     densities: BTreeMap<String, String>,
+    #[cfg(feature = "cafe-terrain-only")]
+    noise_order: Vec<String>,
+    #[cfg(feature = "cafe-terrain-only")]
+    density_order: Vec<String>,
     rules: BTreeMap<String, String>,
     settings: BTreeMap<String, String>,
     presets: BTreeMap<String, String>,
@@ -221,6 +228,67 @@ type DecorationSlot =
 /// Biome sources whose decoration is kept: the three dimensions and a spare.
 const DECORATION_CACHE_LIMIT: usize = 4;
 type Bundle = BTreeMap<String, String>;
+#[cfg(feature = "cafe-terrain-only")]
+fn collect_terrain_tag(
+    raw: &Bundle,
+    registry: &'static BlockRegistry,
+    name: &str,
+    visiting: &mut BTreeSet<String>,
+    values: &mut BTreeSet<String>,
+    depth: usize,
+) -> Result<(), GeneratorError> {
+    if depth > 256 {
+        return Err(resource("terrain block-tag dependency depth exceeds 256"));
+    }
+    if !visiting.insert(name.to_owned()) {
+        return Ok(());
+    }
+    let Some(json) = raw.get(name) else {
+        return Err(resource(format!("missing terrain block tag {name}")));
+    };
+    for entry in TagFile::from_json(json)?.entries {
+        if entry.tag {
+            if raw.contains_key(&entry.id) {
+                collect_terrain_tag(raw, registry, &entry.id, visiting, values, depth + 1)?;
+            } else if entry.required {
+                return Err(resource(format!(
+                    "missing required terrain block tag {}",
+                    entry.id
+                )));
+            }
+        } else if registry.default_state(&entry.id).is_some() {
+            values.insert(entry.id);
+        } else if entry.required {
+            return Err(resource(format!(
+                "missing required terrain block {}",
+                entry.id
+            )));
+        }
+    }
+    visiting.remove(name);
+    Ok(())
+}
+
+#[cfg(feature = "cafe-terrain-only")]
+fn terrain_block_tags(
+    raw: &Bundle,
+    registry: &'static BlockRegistry,
+) -> Result<BTreeMap<String, Vec<String>>, GeneratorError> {
+    let roots = [
+        "minecraft:blocks_motion_in_heightmap",
+        "minecraft:blocks_motion_in_heightmap_no_leaves",
+        "minecraft:uncarvable",
+    ];
+    roots
+        .into_iter()
+        .map(|root| {
+            let mut values = BTreeSet::new();
+            collect_terrain_tag(raw, registry, root, &mut BTreeSet::new(), &mut values, 0)?;
+            Ok((root.to_owned(), values.into_iter().collect()))
+        })
+        .collect()
+}
+
 /// The bundle `name` with the data packs' entries over it.
 fn read_bundle(
     dir: &Path,
@@ -231,6 +299,42 @@ fn read_bundle(
     let text =
         fs::read_to_string(&path).map_err(|e| resource(format!("{}: {e}", path.display())))?;
     Ok(overrides.apply(name, serde_json::from_str(&text)?))
+}
+#[cfg(feature = "cafe-terrain-only")]
+fn read_bundle_keys(dir: &Path, name: &str) -> Result<Vec<String>, GeneratorError> {
+    struct Keys(Vec<String>);
+    struct KeysVisitor;
+    impl<'de> serde::de::Visitor<'de> for KeysVisitor {
+        type Value = Keys;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a resource bundle object")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut keys = Vec::with_capacity(map.size_hint().unwrap_or_default());
+            while let Some(key) = map.next_key::<String>()? {
+                map.next_value::<serde::de::IgnoredAny>()?;
+                keys.push(key);
+            }
+            keys.sort_unstable();
+            keys.dedup();
+            Ok(Keys(keys))
+        }
+    }
+    impl<'de> serde::Deserialize<'de> for Keys {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_map(KeysVisitor)
+        }
+    }
+
+    let path = dir.join(format!("{name}.json"));
+    let text =
+        fs::read_to_string(&path).map_err(|e| resource(format!("{}: {e}", path.display())))?;
+    Ok(serde_json::from_str::<Keys>(&text)?.0)
 }
 fn read_optional_bundle(
     dir: &Path,
@@ -248,6 +352,7 @@ fn read_optional_bundle(
 /// vanilla's TagLoader leaves it out. Without packs the prepared tags must
 /// all resolve; with them (a pack's tag can also break a prepared tag that
 /// includes it), each failed tag goes into `dropped` for the log.
+#[cfg(not(feature = "cafe-terrain-only"))]
 fn build_tags(
     raw: &Bundle,
     overrides: &WorldgenOverrides,
@@ -330,19 +435,28 @@ fn quantize_parameter_report(json: &str) -> Result<String, GeneratorError> {
     }
     Ok(Value::Array(entries).to_string())
 }
-/// `load` on a thread of its own ("Worldgen loader").
-fn loading<T: Send + 'static>(
-    load: impl FnOnce() -> T + Send + 'static,
-) -> io::Result<std::thread::JoinHandle<T>> {
+#[cfg(not(feature = "cafe-terrain-only"))]
+enum Loading<T> {
+    Thread(std::thread::JoinHandle<T>),
+}
+
+/// `load` on a thread of its own ("Worldgen loader") unless Cafe's initial
+/// platform build opts into the inline loader path.
+#[cfg(not(feature = "cafe-terrain-only"))]
+fn loading<T: Send + 'static>(load: impl FnOnce() -> T + Send + 'static) -> io::Result<Loading<T>> {
     std::thread::Builder::new()
         .name("Worldgen loader".into())
         .spawn(load)
+        .map(Loading::Thread)
 }
 /// A loading thread's result; its panic goes on in this thread.
-fn joined<T>(thread: std::thread::JoinHandle<T>) -> T {
-    thread
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+#[cfg(not(feature = "cafe-terrain-only"))]
+fn joined<T>(loading: Loading<T>) -> T {
+    match loading {
+        Loading::Thread(thread) => thread
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+    }
 }
 impl GeneratorData {
     /// Load a worldgen bundle directory. Required files are JSON objects mapping
@@ -365,19 +479,23 @@ impl GeneratorData {
         registry: &'static BlockRegistry,
         ov: &WorldgenOverrides,
     ) -> Result<Arc<Self>, GeneratorError> {
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let mut warnings = Vec::new();
+        #[cfg(feature = "cafe-terrain-only")]
+        let warnings = Vec::new();
         let flags: Vec<(bool, bool)> =
             serde_json::from_str(&fs::read_to_string(dir.join("block_flags.json"))?)?;
         if flags.len() != registry.len() {
             return Err(resource("block_flags.json does not match the registry"));
         }
-        let block_tags = build_tags(
-            &read_bundle(dir, ov, "block_tags")?,
-            ov,
-            "block_tags",
-            &mut warnings,
-            |id| registry.default_state(id).is_some(),
-        )?;
+        let raw_block_tags = read_bundle(dir, ov, "block_tags")?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let block_tags = terrain_block_tags(&raw_block_tags, registry)?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
+        let block_tags = build_tags(&raw_block_tags, ov, "block_tags", &mut warnings, |id| {
+            registry.default_state(id).is_some()
+        })?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let fluid_tags = match read_optional_bundle(dir, ov, "fluid_tags")? {
             Some(raw) => build_tags(&raw, ov, "fluid_tags", &mut warnings, |id| {
                 matches!(
@@ -395,10 +513,12 @@ impl GeneratorData {
         // and the block behaviours) need only the tags: they run on threads of
         // their own while this one reads the rest. A new world's first chunks
         // wait for all of it, with the chunk workers idle.
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let blocks = loading({
             let (dir, tags, fluids) = (dir.join("blocks"), block_tags.clone(), fluid_tags.clone());
             move || super::generator_blocks::BlockBehavior::load(&dir, registry, &tags, &fluids)
         })?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let structures = loading({
             let (dir, tags, ov) = (dir.to_owned(), block_tags.clone(), ov.clone());
             move || -> Result<_, GeneratorError> {
@@ -414,6 +534,7 @@ impl GeneratorData {
                 ))))
             }
         })?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let behaviours = loading({
             let root = dir.parent().map(Path::to_owned);
             move || {
@@ -422,6 +543,10 @@ impl GeneratorData {
                     .map(Arc::new)
             }
         })?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let structures: Option<Arc<super::structure::StructureResources>> = None;
+        #[cfg(feature = "cafe-terrain-only")]
+        let behaviours: Option<Arc<crate::level::Behaviours>> = None;
         let tag_set = |name: &str| -> Result<BTreeSet<&str>, GeneratorError> {
             Ok(block_tags
                 .get(name)
@@ -460,6 +585,14 @@ impl GeneratorData {
             .filter_map(|(key, integer)| integer.then_some(key))
             .collect();
         let biomes = read_bundle(dir, ov, "biomes")?;
+        // The terrain-only Cafe build does not decorate chunks or build
+        // structures. Its prepared overworld settings and material rules use
+        // direct biome holders, so resolving the complete vanilla biome-tag
+        // graph is unnecessary. The source/condition codecs still reject a
+        // tag reference if one is introduced into the data they consume.
+        #[cfg(feature = "cafe-terrain-only")]
+        let biome_tags = BTreeMap::new();
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let biome_tags = build_tags(
             &read_bundle(dir, ov, "biome_tags")?,
             ov,
@@ -468,13 +601,28 @@ impl GeneratorData {
             |id| biomes.contains_key(id),
         )?;
         let biome_set = biomes.keys().cloned().collect::<BTreeSet<_>>();
+        let condition_bundle = read_bundle(dir, ov, "conditions")?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let conditions =
+            MaterialConditionRegistry::from_cafe_terrain_bundle(&condition_bundle, &biome_set)?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let conditions = MaterialConditionRegistry::from_json_with_biome_tags(
-            &read_bundle(dir, ov, "conditions")?,
+            &condition_bundle,
             &biome_set,
             &biome_tags,
         )?;
         let mut presets = read_optional_bundle(dir, ov, "presets")?.unwrap_or_default();
         let reports = dir.join("biome_parameters");
+        #[cfg(feature = "cafe-terrain-only")]
+        if !presets.contains_key("minecraft:overworld") {
+            let path = reports.join("overworld.json");
+            let report = fs::read_to_string(&path)?;
+            presets.insert(
+                "minecraft:overworld".into(),
+                quantize_parameter_report(&report)?,
+            );
+        }
+        #[cfg(not(feature = "cafe-terrain-only"))]
         if reports.is_dir() {
             for entry in fs::read_dir(&reports)? {
                 let path = entry?.path();
@@ -485,14 +633,19 @@ impl GeneratorData {
                 else {
                     continue;
                 };
+                let report = fs::read_to_string(&path)?;
                 presets
                     .entry(format!("minecraft:{stem}"))
-                    .or_insert(quantize_parameter_report(&fs::read_to_string(&path)?)?);
+                    .or_insert(quantize_parameter_report(&report)?);
             }
         }
         let source_catalog =
             BiomeSourceCatalog::new(&biome_set, &biome_tags, &presets.keys().cloned().collect())?;
-        let carvers = CarverCatalog::from_json(&read_bundle(dir, ov, "carvers")?)?;
+        let carver_bundle = read_bundle(dir, ov, "carvers")?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let carvers = CarverCatalog::from_cafe_terrain_bundle(&carver_bundle)?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
+        let carvers = CarverCatalog::from_json(&carver_bundle)?;
         let mut biome_names = Vec::new();
         let mut biome_ids = BTreeMap::new();
         let mut biome_json = Vec::new();
@@ -514,6 +667,9 @@ impl GeneratorData {
                 .collect(),
         )
         .map_err(|e| resource(format!("carving blocks: {e}")))?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let feature_resources = None;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let feature_resources = match (
             read_optional_bundle(dir, ov, "features")?,
             read_optional_bundle(dir, ov, "placed_features")?,
@@ -529,7 +685,11 @@ impl GeneratorData {
             }),
             _ => None,
         };
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let structures = joined(structures)?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let structure_resources = None;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let structure_resources = match (
             read_optional_bundle(dir, ov, "structures")?,
             read_optional_bundle(dir, ov, "structure_sets")?,
@@ -542,7 +702,12 @@ impl GeneratorData {
             }),
             _ => None,
         };
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let behaviours = joined(behaviours);
+        #[cfg(feature = "cafe-terrain-only")]
+        let noise_order = read_bundle_keys(dir, "noises")?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let density_order = read_bundle_keys(dir, "densities")?;
         Ok(Arc::new(Self {
             behaviours,
             structure_resources,
@@ -552,6 +717,10 @@ impl GeneratorData {
             integers,
             noises: read_bundle(dir, ov, "noises")?,
             densities: read_bundle(dir, ov, "densities")?,
+            #[cfg(feature = "cafe-terrain-only")]
+            noise_order,
+            #[cfg(feature = "cafe-terrain-only")]
+            density_order,
             rules: read_bundle(dir, ov, "rules")?,
             settings: read_bundle(dir, ov, "settings")?,
             world_presets: read_bundle(dir, ov, "world_presets")?,
@@ -1076,8 +1245,22 @@ where
                 .unwrap_or(false),
         };
         let root = random.fork_positional();
+        #[cfg(feature = "cafe-terrain-only")]
+        let codec = crate::registry::BlockStateJsonCodec::new_for_cafe_terrain(
+            registry,
+            data.integers.clone(),
+        );
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let codec = crate::registry::BlockStateJsonCodec::new(registry, data.integers.clone())
             .map_err(|e| resource(e.to_string()))?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let mut densities = DensityRegistry::from_cafe_terrain_bundle(
+            &data.noises,
+            &data.densities,
+            &data.noise_order,
+            &data.density_order,
+        )?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let mut densities = DensityRegistry::from_json(&data.noises, &data.densities)?;
         let router =
             NoiseRouter::from_json(&settings_json["noise_router"].to_string(), &mut densities)?;
@@ -1106,6 +1289,20 @@ where
             .filter(|v| !v.is_null())
             .map(|v| AquiferConfig::from_json(&v.to_string(), &mut densities))
             .transpose()?;
+        let rule_name = settings_json["material_rule"]
+            .as_str()
+            .ok_or_else(|| resource("material_rule"))?;
+        #[cfg(feature = "cafe-terrain-only")]
+        let mut library = MaterialRuleLibrary::from_json_reachable(
+            &data.rules,
+            &data.conditions,
+            &codec,
+            densities,
+            seed,
+            settings.legacy,
+            rule_name,
+        )?;
+        #[cfg(not(feature = "cafe-terrain-only"))]
         let mut library = MaterialRuleLibrary::from_json(
             &data.rules,
             &data.conditions,
@@ -1123,9 +1320,6 @@ where
             .map(|config| library.compile_aquifer(config))
             .transpose()?
             .map(|samplers| AquiferField::ALL.map(|field| samplers.get(field).clone()));
-        let rule_name = settings_json["material_rule"]
-            .as_str()
-            .ok_or_else(|| resource("material_rule"))?;
         let rule = library.rule(rule_name)?;
         let preliminary = router.get(RouterField::ChunkSurfaceLevel).clone();
         let spawn_target = match settings_json.get("spawn_target") {

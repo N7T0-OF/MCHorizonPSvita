@@ -1,19 +1,25 @@
 #![no_std]
 
+#[cfg(all(feature = "runtime-demo", feature = "wiiu-worldgen-render"))]
+compile_error!("select either the runtime noise demo or the Cafe-std Horizon worldgen renderer");
+
 #[cfg(test)]
 extern crate std;
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
+#[cfg(feature = "runtime-demo")]
 use horizon_core::position::ChunkPos;
 use horizon_terrain_data::TerrainVertex;
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "runtime-demo"))]
 mod allocator;
+#[cfg(feature = "runtime-demo")]
 mod world;
 
+#[cfg(feature = "runtime-demo")]
 const WORLD_VERTEX_CAPACITY: u32 = world::MAX_VERTEX_COUNT as u32;
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-demo"))]
 const WORLD_TRIANGLE_CAPACITY: u32 = WORLD_VERTEX_CAPACITY / 4 * 6;
 const TRIANGLE_VERTICES: [usize; 6] = [0, 1, 2, 0, 2, 3];
 const GX2_VERTEX_SCALARS: usize = 12;
@@ -104,6 +110,7 @@ fn write_gx2_vertex(
 
 /// Generates a bounded chunk with Horizon's seeded 26.3 Perlin noise, stores
 /// its block states, and emits the chunk's exposed faces for the GX2 backend.
+#[cfg(feature = "runtime-demo")]
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_build_runtime_chunk(
     vertices: *mut TerrainVertex,
@@ -249,7 +256,7 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-demo"))]
 mod tests {
     use super::{
         horizon_wiiu_build_runtime_chunk, horizon_wiiu_camera_motion,

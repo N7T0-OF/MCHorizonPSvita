@@ -1,0 +1,15 @@
+[package]
+name = "horizon-wiiu-worldgen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+horizon-core = { path = "../../crates/horizon-core" }
+horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
+horizon-world = { path = "../../crates/horizon-world", features = ["cafe-terrain-only"] }
+
+[workspace]

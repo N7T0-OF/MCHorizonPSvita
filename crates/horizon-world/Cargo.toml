@@ -6,6 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 description = "Horizon vanilla world data, NBT, regions and chunk storage"
 
+[features]
+default = []
+cafe-terrain-only = []
+
 [dependencies]
 libm = "=0.2.16"
 log = "0.4"

@@ -106,6 +106,58 @@ impl MaterialConditionRegistry {
             })),
         )
     }
+    /// Build the pinned terrain-only vanilla registry without iterating the
+    /// bundled map. Direct lookups keep the production decoder and all eight
+    /// 26.3 material conditions intact.
+    #[cfg(feature = "cafe-terrain-only")]
+    pub fn from_cafe_terrain_bundle(
+        definitions: &BTreeMap<String, String>,
+        biomes: &BTreeSet<String>,
+    ) -> Result<Self, DecodeError> {
+        const NAMES: [&str; 8] = [
+            "minecraft:deep_under_floor",
+            "minecraft:not_under_deep_water",
+            "minecraft:not_underwater",
+            "minecraft:on_ceiling",
+            "minecraft:on_floor",
+            "minecraft:under_ceiling",
+            "minecraft:under_floor",
+            "minecraft:very_deep_under_floor",
+        ];
+        if definitions.len() != NAMES.len() || biomes.len() > 8192 {
+            return Err(DecodeError::Field("Cafe terrain material conditions"));
+        }
+        let biome_names = biomes
+            .iter()
+            .map(|name| identifier(name))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let catalog = Arc::new(BiomeCatalog {
+            names: biome_names,
+            tags: BTreeMap::new(),
+        });
+        let mut values = BTreeMap::new();
+        for name in NAMES {
+            let json = definitions.get(name).ok_or(DecodeError::Field(
+                "missing Cafe terrain material condition",
+            ))?;
+            let raw: Box<RawValue> = serde_json::from_str(json)?;
+            if raw.get().starts_with('"') {
+                return Err(DecodeError::Field(
+                    "Cafe terrain material conditions must be direct",
+                ));
+            }
+            let mut loader = Loader {
+                biomes: Some(catalog.clone()),
+                ..Loader::default()
+            };
+            let value = Arc::new(loader.node(&raw, 0)?);
+            values.insert(identifier(name)?, value);
+        }
+        Ok(Self {
+            values,
+            biomes: Some(catalog),
+        })
+    }
     fn load(
         definitions: &BTreeMap<String, String>,
         biomes: Option<Arc<BiomeCatalog>>,
@@ -118,11 +170,9 @@ impl MaterialConditionRegistry {
             ..Loader::default()
         };
         for (name, json) in definitions {
-            if loader
-                .definitions
-                .insert(identifier(name)?, serde_json::from_str(json)?)
-                .is_some()
-            {
+            let name = identifier(name)?;
+            let parsed = serde_json::from_str(json)?;
+            if loader.definitions.insert(name, parsed).is_some() {
                 return Err(DecodeError::Field("duplicate material condition"));
             }
         }

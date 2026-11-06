@@ -54,6 +54,35 @@ pub struct CarverCatalog {
     definitions: BTreeMap<String, Arc<WorldCarver>>,
 }
 impl CarverCatalog {
+    /// The terrain-only Cafe build uses these four pinned 26.3 carver
+    /// definitions. Resolve the known bundle entries directly and reject a
+    /// changed table instead of loading unused mod-defined carvers.
+    #[cfg(feature = "cafe-terrain-only")]
+    pub fn from_cafe_terrain_bundle(
+        definitions: &BTreeMap<String, String>,
+    ) -> Result<Self, DecodeError> {
+        const NAMES: [&str; 4] = [
+            "minecraft:canyon",
+            "minecraft:cave",
+            "minecraft:cave_extra_underground",
+            "minecraft:nether_cave",
+        ];
+        if definitions.len() != NAMES.len() {
+            return Err(DecodeError::Field("Cafe terrain carver definitions"));
+        }
+        let mut result = BTreeMap::new();
+        for name in NAMES {
+            let json = definitions
+                .get(name)
+                .ok_or(DecodeError::Field("missing Cafe terrain carver"))?;
+            let carver = Arc::new(WorldCarver::from_json(json)?);
+            result.insert(name.to_owned(), carver);
+        }
+        Ok(Self {
+            definitions: result,
+        })
+    }
+
     pub fn from_json(definitions: &BTreeMap<String, String>) -> Result<Self, DecodeError> {
         if definitions.len() > 8192 {
             return Err(DecodeError::Field("carver registry size"));
