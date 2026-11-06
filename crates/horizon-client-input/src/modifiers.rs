@@ -4,29 +4,23 @@ use crate::{
     keybinds::{KeyBinds, key_code},
     keymapping::{KeyAction, SNEAK, SPRINT, ToggleKeys},
 };
+use horizon_client_platform::{KeyCode, Modifiers};
 use std::collections::HashSet;
-use winit::keyboard::{KeyCode, ModifiersState};
 
-const MODIFIERS: [(ModifiersState, [KeyCode; 2]); 4] = [
+const MODIFIERS: [(Modifiers, [KeyCode; 2]); 4] = [
+    (Modifiers::SHIFT, [KeyCode::ShiftLeft, KeyCode::ShiftRight]),
     (
-        ModifiersState::SHIFT,
-        [KeyCode::ShiftLeft, KeyCode::ShiftRight],
-    ),
-    (
-        ModifiersState::CONTROL,
+        Modifiers::CONTROL,
         [KeyCode::ControlLeft, KeyCode::ControlRight],
     ),
-    (ModifiersState::ALT, [KeyCode::AltLeft, KeyCode::AltRight]),
-    (
-        ModifiersState::SUPER,
-        [KeyCode::SuperLeft, KeyCode::SuperRight],
-    ),
+    (Modifiers::ALT, [KeyCode::AltLeft, KeyCode::AltRight]),
+    (Modifiers::SUPER, [KeyCode::SuperLeft, KeyCode::SuperRight]),
 ];
 
 /// A synthesized key updates the same modifier word as window events.
 /// Releasing one side must preserve the other side's hold.
 pub fn set_key(
-    modifiers: &mut ModifiersState,
+    modifiers: &mut Modifiers,
     physical: &mut HashSet<KeyCode>,
     key: KeyCode,
     down: bool,
@@ -53,7 +47,7 @@ pub struct Held {
 
 /// Holds `key` in both the physical keys and the modifier word, which is
 /// what screens read (`InputWithModifiers.hasShiftDown`).
-pub fn hold(modifiers: &mut ModifiersState, physical: &mut HashSet<KeyCode>, key: KeyCode) -> Held {
+pub fn hold(modifiers: &mut Modifiers, physical: &mut HashSet<KeyCode>, key: KeyCode) -> Held {
     let bit = MODIFIERS
         .iter()
         .find(|(_, pair)| pair.contains(&key))
@@ -68,7 +62,7 @@ pub fn hold(modifiers: &mut ModifiersState, physical: &mut HashSet<KeyCode>, key
 }
 
 /// Undoes [`hold`]: a key or bit that was already down stays down.
-pub fn restore(modifiers: &mut ModifiersState, physical: &mut HashSet<KeyCode>, held: Held) {
+pub fn restore(modifiers: &mut Modifiers, physical: &mut HashSet<KeyCode>, held: Held) {
     if !held.was_down {
         physical.remove(&held.key);
     }
@@ -80,7 +74,7 @@ pub fn restore(modifiers: &mut ModifiersState, physical: &mut HashSet<KeyCode>, 
 /// Recover missing modifier releases without releasing a rebound key or a pad.
 /// ToggleKeyMapping itself preserves keyboard and controller toggles on release.
 pub fn reconcile(
-    modifiers: ModifiersState,
+    modifiers: Modifiers,
     physical: &mut HashSet<KeyCode>,
     bindings: &KeyBinds,
     toggles: &mut ToggleKeys,
@@ -110,7 +104,7 @@ mod tests {
 
     #[test]
     fn modifier_taps_release_both_bits() {
-        let mut modifiers = ModifiersState::empty();
+        let mut modifiers = Modifiers::empty();
         let mut physical = HashSet::new();
         for (bit, pair) in MODIFIERS {
             for key in pair {
@@ -125,7 +119,7 @@ mod tests {
 
     #[test]
     fn releasing_one_side_keeps_the_other_modifier_held() {
-        let mut modifiers = ModifiersState::empty();
+        let mut modifiers = Modifiers::empty();
         let mut physical = HashSet::new();
         for (bit, [left, right]) in MODIFIERS {
             set_key(&mut modifiers, &mut physical, left, true);
@@ -139,7 +133,7 @@ mod tests {
 
     #[test]
     fn a_held_click_restores_the_previous_state() {
-        let mut modifiers = ModifiersState::empty();
+        let mut modifiers = Modifiers::empty();
         let mut physical = HashSet::new();
         let held = hold(&mut modifiers, &mut physical, KeyCode::ShiftLeft);
         assert!(modifiers.shift_key());
@@ -149,11 +143,11 @@ mod tests {
 
         // Right Shift already held, or the OS word set with no physical key.
         for start in [HashSet::from([KeyCode::ShiftRight]), HashSet::new()] {
-            let mut modifiers = ModifiersState::SHIFT;
+            let mut modifiers = Modifiers::SHIFT;
             let mut physical = start.clone();
             let held = hold(&mut modifiers, &mut physical, KeyCode::ShiftLeft);
             restore(&mut modifiers, &mut physical, held);
-            assert_eq!(modifiers, ModifiersState::SHIFT);
+            assert_eq!(modifiers, Modifiers::SHIFT);
             assert_eq!(physical, start);
         }
     }
@@ -184,7 +178,7 @@ mod tests {
                         let mut pad_held = [false; 2];
                         pad_held[slot] = pad;
                         reconcile(
-                            ModifiersState::ALT,
+                            Modifiers::ALT,
                             &mut physical,
                             &bindings,
                             &mut toggles,
@@ -205,7 +199,7 @@ mod tests {
         let mut toggles = ToggleKeys::default();
         toggles.key(SNEAK, KeyAction::Press, false, false);
         reconcile(
-            ModifiersState::ALT,
+            Modifiers::ALT,
             &mut HashSet::new(),
             &KeyBinds::default(),
             &mut toggles,
@@ -220,7 +214,7 @@ mod tests {
         let mut toggles = ToggleKeys::default();
         toggles.pad_toggle(SNEAK, false);
         reconcile(
-            ModifiersState::empty(),
+            Modifiers::empty(),
             &mut HashSet::from([KeyCode::ShiftLeft]),
             &KeyBinds::default(),
             &mut toggles,

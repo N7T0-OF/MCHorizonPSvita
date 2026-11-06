@@ -15,6 +15,7 @@ use horizon_client::{
     sculk::{Info, SculkKind, WardenSpawnTracker},
     world::World,
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::{
     geometry::{Direction, Vec3},
     position::BlockPos,
@@ -27,7 +28,6 @@ use std::{
     io::Write as _,
     sync::Arc,
 };
-use winit::keyboard::KeyCode;
 
 struct MobSpec {
     kind: String,

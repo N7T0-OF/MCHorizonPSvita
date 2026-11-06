@@ -15,13 +15,11 @@ use horizon_client::{
     ui,
     widgets::{self, Narratable, ScreenInfo},
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::position::BlockPos;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
 use horizon_world::level::flags as level_flags;
-use winit::{
-    event::{ElementState, KeyEvent},
-    keyboard::{KeyCode, PhysicalKey},
-};
+use winit::event::{ElementState, KeyEvent};
 
 const BLACK: u32 = 0xFF00_0000;
 const PAGE_CHARS: usize = 1024;
@@ -397,10 +395,7 @@ impl Game<'_> {
             self.book_shortcut(shortcut);
             return;
         }
-        let key = match event.physical_key {
-            PhysicalKey::Code(k) => Some(k),
-            _ => None,
-        };
+        let key = self.window_event_key;
         self.book_input(key, event.text.as_deref());
     }
     /// A key and the text it typed in the open book (the keyboard, or a

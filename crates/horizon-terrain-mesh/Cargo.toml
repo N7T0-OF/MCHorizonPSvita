@@ -6,11 +6,30 @@ license.workspace = true
 rust-version.workspace = true
 description = "Portable terrain section meshes and their compact layouts"
 
+[features]
+default = ["heap-census"]
+heap-census = ["horizon-threads/mimalloc"]
+test-support = []
+
 [dependencies]
+horizon-assets = { path = "../horizon-assets" }
+horizon-client-core = { path = "../horizon-client-core" }
+horizon-core = { path = "../horizon-core" }
+horizon-items = { path = "../horizon-items" }
+horizon-optifine = { path = "../horizon-optifine" }
 horizon-terrain-data = { path = "../horizon-terrain-data" }
+horizon-threads = { path = "../horizon-threads", default-features = false }
+horizon-world = { path = "../horizon-world" }
 bytemuck = "1.24"
 glam = "0.30"
+log = "0.4"
+lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
+png = "0.18"
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["raw_value"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "time"] }
 
 [lints]
 workspace = true

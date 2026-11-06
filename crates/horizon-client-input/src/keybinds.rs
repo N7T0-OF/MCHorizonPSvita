@@ -2,8 +2,8 @@
 //! defaults, `key_<name>:key.keyboard.x` persistence, display names, and the
 //! translation of rebound physical keys back to the default keys the game
 //! logic listens for.
+use horizon_client_platform::{KeyCode, MouseButton};
 use std::collections::BTreeMap;
-use winit::{event::MouseButton, keyboard::KeyCode};
 
 /// (name, default key, category) in Options.keyMappings order.
 pub const MAPPINGS: &[(&str, &str, &str)] = &[
@@ -92,7 +92,7 @@ pub const CATEGORIES: [&str; 8] = [
     "debug",
 ];
 
-/// InputConstants key names <-> winit physical keys.
+/// InputConstants key names <-> Horizon's platform-neutral physical keys.
 const KEYS: &[(&str, KeyCode)] = &[
     ("key.keyboard.a", KeyCode::KeyA),
     ("key.keyboard.b", KeyCode::KeyB),
@@ -289,20 +289,13 @@ pub use horizon_client_core::key_display::display_name;
 /// A key event: what the layout writes on its key, without modifiers, names
 /// that key from now on (`key_display::learn_layout`), so an AZERTY player's
 /// Q key shows A.
-pub fn learn_layout(event: &winit::event::KeyEvent) {
-    use winit::keyboard::{Key, PhysicalKey};
-    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-    let PhysicalKey::Code(code) = event.physical_key else {
-        return;
-    };
+pub fn learn_layout(code: KeyCode, unmodified_text: Option<&str>) {
     let Some(name) = key_name(code) else {
         return;
     };
     let learn = horizon_client_core::key_display::learn_layout;
-    match event.key_without_modifiers() {
-        Key::Character(text) => learn(name, &text),
-        Key::Dead(Some(c)) => learn(name, c.encode_utf8(&mut [0; 4])),
-        _ => {}
+    if let Some(text) = unmodified_text {
+        learn(name, text);
     }
 }
 

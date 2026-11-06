@@ -18,6 +18,7 @@ use horizon_client::{
     text::{Style, Text},
     ui::EditBox,
 };
+use horizon_client_platform::KeyCode;
 use std::{
     collections::BTreeSet,
     hash::{Hash, Hasher},
@@ -186,7 +187,6 @@ impl Game<'_> {
     }
     /// A key press while the search box has focus.
     pub(super) fn recipe_key(&mut self, event: &winit::event::KeyEvent) {
-        use winit::keyboard::PhysicalKey;
         if let Some(shortcut) = self.edit_shortcut(event) {
             self.recipe_shortcut(shortcut);
             return;
@@ -197,10 +197,9 @@ impl Game<'_> {
         let Some(search) = self.recipe_ui.search.as_mut() else {
             return;
         };
-        let handled = match event.physical_key {
-            PhysicalKey::Code(code) => search.key(code, ctrl, shift),
-            _ => false,
-        };
+        let handled = self
+            .window_event_key
+            .is_some_and(|code| search.key(code, ctrl, shift));
         if !handled
             && types_text
             && let Some(text) = &event.text
@@ -769,8 +768,7 @@ impl Game<'_> {
     /// `RecipeBookComponent.keyPressed`: Enter or Space (`isSelection`) places
     /// the recipe clicked last again, key repeats included, as many as fit
     /// with Shift. The focused search box takes the key first.
-    pub(super) fn recipe_book_key(&mut self, key: winit::keyboard::KeyCode) -> bool {
-        use winit::keyboard::KeyCode;
+    pub(super) fn recipe_book_key(&mut self, key: KeyCode) -> bool {
         if !matches!(key, KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space) {
             return false;
         }

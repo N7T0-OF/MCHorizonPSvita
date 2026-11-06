@@ -30,7 +30,8 @@ use horizon_client::{
     menu::Input,
     stations::hover_name,
 };
-use winit::{event::MouseButton, keyboard::KeyCode};
+use horizon_client_platform::KeyCode;
+use horizon_client_platform::MouseButton;
 
 /// A sort button's side in GUI pixels.
 const SORT_BUTTON: f32 = 9.0;

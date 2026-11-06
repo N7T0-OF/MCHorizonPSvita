@@ -6,6 +6,7 @@
 //! bindings, deadzones and the look curve, button edges from successive pad
 //! states, and `horizon-controller.txt`, kept next to `options.txt` so that
 //! file stays exactly vanilla's. The game reads the pads with gilrs.
+use horizon_client_platform::{KeyCode, MouseButton};
 use std::{
     collections::BTreeMap,
     fs,
@@ -354,8 +355,8 @@ pub enum Route {
     /// Does nothing by itself: what reads it asks whether the button is held
     /// (`Minecraft.handleKeybinds`' toolbar keys, held with a hotbar key).
     Held,
-    Key(winit::keyboard::KeyCode),
-    Mouse(winit::event::MouseButton),
+    Key(KeyCode),
+    Mouse(MouseButton),
 }
 
 /// The route of a bindable action; `None` for one the pad can't reach.

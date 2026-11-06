@@ -9,8 +9,8 @@ use horizon_client::{
     ui,
     widgets::{self, ScreenInfo},
 };
+use horizon_client_platform::KeyCode;
 use horizon_world::nbt::Tag;
-use winit::keyboard::KeyCode;
 
 impl Screen {
     /// Screen.extractBackground for non-isInGameUi screens, and

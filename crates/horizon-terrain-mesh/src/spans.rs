@@ -12,6 +12,11 @@ use std::{
 };
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "heap-census")]
+type HeapTag = Option<horizon_threads::heap_census::Tag>;
+#[cfg(not(feature = "heap-census"))]
+type HeapTag = ();
+
 thread_local! {
     static SPANS: RefCell<Vec<Span>> = const { RefCell::new(Vec::new()) };
     /// Spans recorded on this thread alone, wall time only ([`record_here`]).
@@ -76,12 +81,15 @@ pub fn time<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
 #[must_use = "the span ends when the guard is dropped"]
 pub struct Guard {
     open: Option<(&'static str, Instant, Option<Duration>, u8)>,
-    _heap: Option<horizon_threads::heap_census::Tag>,
+    _heap: HeapTag,
 }
 /// Start a span named `name` that ends when the returned [`Guard`] is dropped.
 #[inline]
 pub fn guard(name: &'static str) -> Guard {
+    #[cfg(feature = "heap-census")]
     let _heap = horizon_threads::heap_tag(name);
+    #[cfg(not(feature = "heap-census"))]
+    let _heap = ();
     if !recording_here() {
         return Guard { open: None, _heap };
     }
@@ -278,6 +286,7 @@ pub fn describe(spans: &[Span]) -> String {
 /// Perfetto opens it). Times are microseconds since the process started. Off,
 /// a step costs one relaxed load.
 pub mod startup {
+    use super::HeapTag;
     use std::{
         io::Write as _,
         sync::{
@@ -352,7 +361,7 @@ pub mod startup {
         started: Instant,
         traced: bool,
         /// A heap-census build's tag for the step's allocations.
-        _heap: Option<horizon_threads::heap_census::Tag>,
+        _heap: HeapTag,
     }
     impl Drop for Step {
         fn drop(&mut self) {
@@ -373,11 +382,21 @@ pub mod startup {
     #[inline]
     pub fn step(name: &'static str) -> Option<Step> {
         let traced = on();
-        (traced || horizon_threads::HEAP_CENSUS).then(|| Step {
-            name,
-            started: Instant::now(),
-            traced,
-            _heap: horizon_threads::heap_tag(name),
+        #[cfg(feature = "heap-census")]
+        let heap_census = horizon_threads::HEAP_CENSUS;
+        #[cfg(not(feature = "heap-census"))]
+        let heap_census = false;
+        (traced || heap_census).then(|| {
+            #[cfg(feature = "heap-census")]
+            let heap = horizon_threads::heap_tag(name);
+            #[cfg(not(feature = "heap-census"))]
+            let heap = ();
+            Step {
+                name,
+                started: Instant::now(),
+                traced,
+                _heap: heap,
+            }
         })
     }
 

@@ -1,5 +1,8 @@
 //! Platform-neutral contracts used by Horizon's client frontends.
 
+pub mod input;
+pub use input::{KeyCode, Modifiers, MouseButton};
+
 use std::time::{Duration, Instant};
 
 /// What the game asks of its platform loop after the current step.

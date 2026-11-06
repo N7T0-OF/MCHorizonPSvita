@@ -1,7 +1,7 @@
 //! Every input the game names: vanilla's key mappings (`Options.keyMappings`) and Horizon's
 //! pad-only actions. Held state is asked by [`Action`] ([`crate::held::HeldKeys::held`]), not by a
 //! key: code that wants a mapping says which one, and every device that can hold it counts.
-use winit::keyboard::KeyCode;
+use horizon_client_platform::KeyCode;
 
 macro_rules! actions {
     ($($variant:ident, $name:literal, $key:expr;)*) => {

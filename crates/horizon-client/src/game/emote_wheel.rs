@@ -5,9 +5,9 @@
 
 use super::{Game, Screen};
 use horizon_client::{hud::HudBatch, text::Text};
+use horizon_client_platform::KeyCode;
 use std::time::{Duration, Instant};
 use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// Emotes on the wheel.
 pub(super) const SLOTS: usize = 8;
@@ -86,8 +86,9 @@ impl Game<'_> {
         match event {
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Released
-                    && matches!(event.physical_key, PhysicalKey::Code(key)
-                        if self.settings.keys.translate(key) == Some(Ok(KeyCode::KeyB))) =>
+                    && self.window_event_key.is_some_and(|key| {
+                        self.settings.keys.translate(key) == Some(Ok(KeyCode::KeyB))
+                    }) =>
             {
                 self.emote_wheel_released();
                 true

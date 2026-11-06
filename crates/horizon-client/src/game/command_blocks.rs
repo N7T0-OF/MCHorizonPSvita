@@ -13,6 +13,7 @@ use horizon_client::{
     ui::{self, EditBox},
     world::World,
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::position::BlockPos;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
 use horizon_world::{
@@ -21,10 +22,7 @@ use horizon_world::{
     nbt::Tag,
     registry::{BlockRegistry, BlockStateId},
 };
-use winit::{
-    event::{ElementState, KeyEvent},
-    keyboard::{KeyCode, PhysicalKey},
-};
+use winit::event::{ElementState, KeyEvent};
 
 type Pos = (i32, i32, i32);
 
@@ -797,7 +795,7 @@ impl Game<'_> {
         if event.state != ElementState::Pressed {
             return;
         }
-        let PhysicalKey::Code(key) = event.physical_key else {
+        let Some(key) = self.window_event_key else {
             return;
         };
         let shortcut = self.edit_shortcut(event);

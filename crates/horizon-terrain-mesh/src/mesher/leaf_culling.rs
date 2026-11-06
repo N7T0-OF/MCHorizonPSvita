@@ -15,9 +15,11 @@
 //! the section, preserving boundaries and cavity faces. `Hidden` drops only
 //! those whose faced leaf has another leaf or an opaque cube behind it
 //! ([`backed`]), so the layer seen through the canopy's outer holes stays.
+#[cfg(test)]
+use crate::test_chunk::Chunk;
 
 use super::{B, Info, P, Padded, pi};
-use crate::{blocks::RenderShape, chunk::Chunk, graphics::LeafCullingMode};
+use crate::{MeshChunk, blocks::RenderShape, graphics::LeafCullingMode};
 
 /// A cell of the padded snapshot, as far as leaf culling cares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,12 +69,12 @@ pub(super) struct LeafMask {
 impl LeafMask {
     /// Classify the padded snapshot and, for the interior modes, measure how
     /// deep each leaf sits below the canopy surface.
-    pub(super) fn prepare(
+    pub(super) fn prepare<C: MeshChunk>(
         &mut self,
         mode: LeafCullingMode,
         pad: &Padded,
         info: &[Info],
-        region: &[[Option<&Chunk>; 3]; 3],
+        region: &[[Option<&C>; 3]; 3],
         base_y: i32,
     ) {
         self.active = mode != LeafCullingMode::Off;
@@ -234,10 +236,10 @@ pub(super) fn in_section(x: i32, y: i32, z: i32) -> bool {
 /// `Hidden`: whether the padded cell `[x, y, z]`, the one behind a faced leaf,
 /// is a leaf or a full opaque cube. A cell without real data never is.
 #[inline]
-pub(super) fn backed(
+pub(super) fn backed<C: MeshChunk>(
     pad: &Padded,
     info: &[Info],
-    region: &[[Option<&Chunk>; 3]; 3],
+    region: &[[Option<&C>; 3]; 3],
     base_y: i32,
     [x, y, z]: [i32; 3],
 ) -> bool {
@@ -251,12 +253,12 @@ pub(super) fn backed(
 /// would make a canopy look enclosed. A Y outside the column counts as unknown
 /// for the same reason. The mask's outer shell is unknown too, so nothing is
 /// inferred past the data the worker snapshotted.
-fn known(region: &[[Option<&Chunk>; 3]; 3], base_y: i32, x: i32, y: i32, z: i32) -> bool {
+fn known<C: MeshChunk>(region: &[[Option<&C>; 3]; 3], base_y: i32, x: i32, y: i32, z: i32) -> bool {
     if x <= -B || x >= 16 + B - 1 || y <= -B || y >= 16 + B - 1 || z <= -B || z >= 16 + B - 1 {
         return false;
     }
     let chunk = region[((z + 16) >> 4) as usize][((x + 16) >> 4) as usize];
-    chunk.is_some_and(|chunk| chunk.section_index(base_y + y).is_some())
+    chunk.is_some_and(|chunk| chunk.section_at(base_y + y).is_ok())
 }
 
 #[cfg(test)]

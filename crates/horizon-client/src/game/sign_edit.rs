@@ -13,11 +13,9 @@ use horizon_client::{
     signs::{ClickAction, DYE_TEXT, click_action, editor_sprite},
     ui::EditBox,
 };
+use horizon_client_platform::KeyCode;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
-use winit::{
-    event::{ElementState, KeyEvent},
-    keyboard::{KeyCode, PhysicalKey},
-};
+use winit::event::{ElementState, KeyEvent};
 
 pub(super) struct SignEditor {
     pub pos: (i32, i32, i32),
@@ -521,10 +519,7 @@ impl Game<'_> {
             self.sign_shortcut(shortcut);
             return;
         }
-        let key = match event.physical_key {
-            PhysicalKey::Code(k) => Some(k),
-            _ => None,
-        };
+        let key = self.window_event_key;
         self.sign_input(key, event.text.as_deref());
     }
     /// A key and the text it typed on the sign being edited (the keyboard,

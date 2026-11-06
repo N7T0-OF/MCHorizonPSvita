@@ -10,8 +10,8 @@ use horizon_client::{
     items::ItemStack,
     mod_api::{NativeFakeUse, NativeUseTarget},
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::{geometry::Vec3, position::BlockPos};
-use winit::keyboard::KeyCode;
 
 /// `Player.getStandingEyeHeight`: a fake player's eyes above its feet.
 const FAKE_EYE: f32 = 1.62;

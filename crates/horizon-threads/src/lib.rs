@@ -4,6 +4,7 @@
 /// The game window's boot screen, before wgpu's first frame paints over it.
 #[cfg(target_os = "windows")]
 pub mod boot_paint;
+#[cfg(feature = "mimalloc")]
 pub mod heap_census;
 pub mod jobs;
 pub mod process_memory;
@@ -299,30 +300,37 @@ pub fn catch_stop_signals() {}
 /// World generation, meshing and the tick allocate and free small blocks on
 /// every worker at once; the system heaps serialise them (Windows' heap was
 /// 16% of a chunk's generation time), mimalloc keeps a heap per thread.
+#[cfg(feature = "mimalloc")]
 pub type Allocator = mimalloc::MiMalloc;
 /// The game's mimalloc allocator.
+#[cfg(feature = "mimalloc")]
 pub const ALLOCATOR: Allocator = mimalloc::MiMalloc;
 
 /// The global allocator of a build with the `alloc-census` feature: live
 /// heap bytes by startup step and thread, for `horizon-ctl memory`.
+#[cfg(feature = "alloc-census")]
 pub use heap_census::CensusAllocator;
 /// Whether this build counts the heap by tag (feature `alloc-census`).
+#[cfg(feature = "mimalloc")]
 pub const HEAP_CENSUS: bool = cfg!(feature = "alloc-census");
 /// Tag the calling thread's allocations `name` while the guard lives, in a
 /// build that counts the heap ([`HEAP_CENSUS`]); nothing otherwise.
 #[inline]
+#[cfg(feature = "mimalloc")]
 pub fn heap_tag(name: &'static str) -> Option<heap_census::Tag> {
     HEAP_CENSUS.then(|| heap_census::tag(name))
 }
 
 /// `mi_option_purge_delay` in mimalloc.h (index 15 in v2 and v3); the bindings
 /// don't name it.
+#[cfg(feature = "mimalloc")]
 const PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
 
 /// Set the allocator up, first thing in `main`: free pages go back to the OS
 /// at once instead of a second later. With mimalloc's delay the game held a
 /// quarter more memory than with the system heap; without it a few percent,
 /// and generation keeps most of its speed-up.
+#[cfg(feature = "mimalloc")]
 pub fn configure_allocator() {
     // SAFETY: sets one integer option, which mimalloc reads at each purge.
     unsafe {
@@ -332,6 +340,7 @@ pub fn configure_allocator() {
 
 /// The bytes the allocator has committed now and at its peak (mimalloc's
 /// process info), for `horizon-ctl memory`.
+#[cfg(feature = "mimalloc")]
 pub fn allocator_commit() -> (usize, usize) {
     let mut info = [0usize; 8];
     let [
@@ -364,6 +373,7 @@ pub fn allocator_commit() -> (usize, usize) {
 /// large was dropped: mimalloc's free pages, then the system heap's, which
 /// native libraries still use: glibc keeps freed pages in the arena of the
 /// thread that allocated them, and macOS in its zones until memory runs short.
+#[cfg(feature = "mimalloc")]
 pub fn release_free_memory() {
     // SAFETY: frees only pages no allocation uses (this thread's heap, shared arenas).
     unsafe {
@@ -372,7 +382,7 @@ pub fn release_free_memory() {
     release();
 }
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[cfg(all(feature = "mimalloc", target_os = "linux", target_env = "gnu"))]
 fn release() {
     // SAFETY: returns free heap pages of every arena to the OS; no live
     // allocation moves.
@@ -381,7 +391,7 @@ fn release() {
     }
 }
 
-#[cfg(target_vendor = "apple")]
+#[cfg(all(feature = "mimalloc", target_vendor = "apple"))]
 fn release() {
     unsafe extern "C" {
         fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
@@ -393,7 +403,10 @@ fn release() {
     }
 }
 
-#[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_vendor = "apple")))]
+#[cfg(all(
+    feature = "mimalloc",
+    not(any(all(target_os = "linux", target_env = "gnu"), target_vendor = "apple"))
+))]
 fn release() {}
 
 /// The REPARSE_DATA_BUFFER of a mount point naming `name` (UTF-16, `\??\` prefixed). The length
@@ -620,6 +633,7 @@ mod tests {
 
     /// The option set is the purge delay: mimalloc v3's default for it is
     /// 1000 ms, and it is 0 once configured.
+    #[cfg(feature = "mimalloc")]
     #[test]
     fn configuring_the_allocator_purges_at_once() {
         // SAFETY: reads and sets one integer option.

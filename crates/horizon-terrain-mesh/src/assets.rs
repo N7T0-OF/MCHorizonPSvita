@@ -435,7 +435,9 @@ mod tests {
     fn always_edible_and_consume_effects_loaded() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../.local/horizon-client/26.3");
-        if !root.join("items.json").exists() {
+        // A partial exporter output may have item data but cannot be loaded
+        // by `Assets` until its final manifest is written.
+        if !root.join("horizon-resources.json").exists() {
             return;
         }
         let assets = crate::assets::Assets::load(&root).unwrap();

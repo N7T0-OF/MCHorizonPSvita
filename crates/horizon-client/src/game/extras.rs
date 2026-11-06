@@ -12,8 +12,8 @@ use horizon_client::{
     reconnect::{Retry, Tracker},
     title::Mode,
 };
+use horizon_client_platform::MouseButton;
 use std::time::Duration;
-use winit::event::MouseButton;
 
 #[derive(Default)]
 pub(super) struct ExtrasState {

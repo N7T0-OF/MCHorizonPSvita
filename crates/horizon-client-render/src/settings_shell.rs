@@ -9,6 +9,7 @@ use crate::{
     text::Text,
     ui,
 };
+use horizon_client_platform::KeyCode;
 
 /// The screen's parts in GUI pixels. Down the left: the mark, the search
 /// field, the page list, and Undo and Done at the foot. On the right: the
@@ -631,12 +632,12 @@ pub(crate) fn tab_step(n: usize, current: Option<usize>, shift: bool) -> usize {
 pub(crate) fn arrow_step<T: Copy>(
     controls: &[(T, [f32; 4])],
     current: Option<usize>,
-    key: winit::keyboard::KeyCode,
+    key: KeyCode,
     cols: &Columns,
     is_row: impl Fn(T) -> bool,
 ) -> Option<usize> {
     use crate::gamepad::Button as B;
-    use winit::keyboard::KeyCode as K;
+    use horizon_client_platform::KeyCode as K;
     let dir = match key {
         K::ArrowUp => B::DPadUp,
         K::ArrowDown => B::DPadDown,

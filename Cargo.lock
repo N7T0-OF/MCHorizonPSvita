@@ -1435,6 +1435,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "horizon-client-core",
+ "horizon-client-platform",
  "horizon-dualsense",
  "horizon-theme",
  "png",
@@ -1459,6 +1460,7 @@ dependencies = [
  "horizon-chat-filter",
  "horizon-client-core",
  "horizon-client-input",
+ "horizon-client-platform",
  "horizon-client-render",
  "horizon-command",
  "horizon-core",
@@ -1522,6 +1524,7 @@ dependencies = [
  "horizon-bench",
  "horizon-client-core",
  "horizon-client-input",
+ "horizon-client-platform",
  "horizon-command",
  "horizon-core",
  "horizon-cosmetics",
@@ -1860,8 +1863,20 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "horizon-assets",
+ "horizon-client-core",
+ "horizon-core",
+ "horizon-items",
+ "horizon-optifine",
  "horizon-terrain-data",
+ "horizon-threads",
+ "horizon-world",
+ "log",
+ "lz4_flex",
+ "png",
+ "rustix 1.1.5",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

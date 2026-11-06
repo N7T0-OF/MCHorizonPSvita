@@ -1260,7 +1260,7 @@ impl Game<'_> {
                     WindowEvent::MouseInput {
                         device_id,
                         state,
-                        button,
+                        button: horizon_client_input::winit_adapter::to_winit_mouse(button),
                     },
                     InputOrigin::Game,
                 );
@@ -1318,7 +1318,7 @@ impl Game<'_> {
         self.physical_buttons.clear();
         self.left = false;
         self.right = false;
-        self.modifiers = winit::keyboard::ModifiersState::empty();
+        self.modifiers = horizon_client_platform::Modifiers::empty();
         self.debug_keys.modifier_down = false;
         self.pad.clear_injected();
     }

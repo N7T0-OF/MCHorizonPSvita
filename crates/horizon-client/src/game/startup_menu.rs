@@ -8,7 +8,8 @@ use horizon_client::{
     options_ui::{Event, OptionsUi, Page},
     widgets::{Kind, Target},
 };
-use winit::{event::KeyEvent, keyboard::ModifiersState};
+use horizon_client_platform::{KeyCode, Modifiers};
+use winit::event::{KeyEvent, MouseButton as WinitMouseButton};
 
 #[derive(Default)]
 pub(super) struct StartupMenu {
@@ -20,7 +21,7 @@ pub(super) struct StartupMenu {
     root: PathBuf,
     cursor: (f32, f32),
     pointer: (f64, f64),
-    modifiers: ModifiersState,
+    modifiers: Modifiers,
     physical_keys: HashSet<KeyCode>,
     dragging: bool,
     clipboard: SystemClipboard,
@@ -242,7 +243,12 @@ impl StartupMenu {
     }
 
     /// `Screen.keyPressed` on the title screens: the action a key starts (Enter confirms, see `confirm_key` in title.rs).
-    fn title_key(&mut self, event: &KeyEvent, viewport: (f32, f32)) -> Action {
+    fn title_key(
+        &mut self,
+        event: &KeyEvent,
+        key: Option<KeyCode>,
+        viewport: (f32, f32),
+    ) -> Action {
         let shortcut = self.shortcut(event);
         let Some(title) = &mut self.title else {
             return Action::None;
@@ -269,29 +275,29 @@ impl StartupMenu {
         } else {
             self.modifiers.control_key()
         };
-        if let PhysicalKey::Code(key) = event.physical_key
+        if let Some(key) = key
             && title
                 .tab_bar_key(key, ctrl, self.modifiers.shift_key())
                 .is_some()
         {
             return Action::None;
         }
-        match event.physical_key {
-            PhysicalKey::Code(KeyCode::Escape) => title.escape(),
-            PhysicalKey::Code(KeyCode::F5) => title.refresh_servers(),
-            PhysicalKey::Code(KeyCode::Tab) => {
+        match key {
+            Some(KeyCode::Escape) => title.escape(),
+            Some(KeyCode::F5) => title.refresh_servers(),
+            Some(KeyCode::Tab) => {
                 title.tab_dir(self.modifiers.shift_key(), viewport);
             }
-            PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
+            Some(KeyCode::Enter | KeyCode::NumpadEnter) => {
                 return title.confirm_key_size(viewport).0;
             }
-            PhysicalKey::Code(KeyCode::Space)
+            Some(KeyCode::Space)
                 if !title.has_caret_field()
                     && (title.list_focused() || title.focused_button.is_some()) =>
             {
                 return title.confirm_key_size(viewport).0;
             }
-            PhysicalKey::Code(
+            Some(
                 key @ (KeyCode::Backspace
                 | KeyCode::Delete
                 | KeyCode::ArrowLeft
@@ -305,7 +311,7 @@ impl StartupMenu {
                     self.modifiers.shift_key(),
                 );
             }
-            PhysicalKey::Code(
+            Some(
                 key @ (KeyCode::ArrowLeft
                 | KeyCode::ArrowRight
                 | KeyCode::ArrowUp
@@ -321,7 +327,7 @@ impl StartupMenu {
                 if cleared {
                     title.search_changed();
                 }
-                if event.physical_key == PhysicalKey::Code(KeyCode::Backspace) {
+                if key == Some(KeyCode::Backspace) {
                     if !cleared {
                         title.backspace();
                     }
@@ -769,7 +775,7 @@ impl Loading {
                 if self.menu.key_focus_release() {
                     self.update_menu_cursor();
                 }
-                if *state == ElementState::Pressed && *button == MouseButton::Left {
+                if *state == ElementState::Pressed && *button == WinitMouseButton::Left {
                     let (cx, cy) = self.menu.cursor;
                     self.menu.key_origin = self
                         .menu_key_targets()
@@ -945,9 +951,9 @@ impl Loading {
             let click = WindowEvent::MouseInput {
                 device_id: DeviceId::dummy(),
                 state,
-                button: MouseButton::Left,
+                button: WinitMouseButton::Left,
             };
-            if let Err(e) = self.menu_event(event_loop, click) {
+            if let Err(e) = self.menu_event(event_loop, click, None) {
                 log::warn!("Horizon: keyboard focus click: {e}");
             }
         }
@@ -958,9 +964,10 @@ impl Loading {
         &mut self,
         event_loop: &dyn EventLoopCtl,
         event: WindowEvent,
+        key: Option<KeyCode>,
     ) -> Result<()> {
         if let WindowEvent::KeyboardInput { event, .. } = &event
-            && let PhysicalKey::Code(key) = event.physical_key
+            && let Some(key) = key
         {
             if event.state == ElementState::Pressed {
                 self.menu.physical_keys.insert(key);
@@ -978,10 +985,9 @@ impl Loading {
         }
         // Fullscreen (F11) is the window's: not the screen's input; the
         // keyboard's own clicks aren't the mouse.
-        let f11 = matches!(&event, WindowEvent::KeyboardInput { event, .. }
-            if event.physical_key == PhysicalKey::Code(KeyCode::F11));
+        let f11 = key == Some(KeyCode::F11);
         if !f11 && !synthetic {
-            super::narrator::narrate_input(&mut self.menu.narration, &event, self.menu.cursor);
+            super::narrator::narrate_input(&mut self.menu.narration, &event, self.menu.cursor, key);
         }
         // Screen.keyPressed: Tab, the arrows and Enter move and press the
         // focus, unless the focused widget or the screen keeps them.
@@ -989,7 +995,7 @@ impl Loading {
             event: key_event, ..
         } = &event
             && key_event.state == ElementState::Pressed
-            && let PhysicalKey::Code(key) = key_event.physical_key
+            && let Some(key) = key
             && self.menu_key_focus(event_loop, key)
         {
             return Ok(());
@@ -1014,7 +1020,10 @@ impl Loading {
                 self.apply_menu_settings();
             }
             WindowEvent::RedrawRequested => self.draw(),
-            WindowEvent::ModifiersChanged(modifiers) => self.menu.modifiers = modifiers.state(),
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.menu.modifiers =
+                    horizon_client_input::winit_adapter::from_winit_modifiers(modifiers.state());
+            }
             // `PackSelectionScreen.onFilesDrop`: a pack dropped on the window
             // joins the Create New World screen's data packs.
             WindowEvent::DroppedFile(path) => {
@@ -1023,7 +1032,7 @@ impl Loading {
                 }
             }
             WindowEvent::Focused(false) => {
-                self.menu.modifiers = ModifiersState::empty();
+                self.menu.modifiers = Modifiers::empty();
                 self.menu.physical_keys.clear();
                 self.menu.dragging = false;
                 if let Some(title) = &mut self.menu.title {
@@ -1036,14 +1045,14 @@ impl Loading {
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && self.menu.pending.is_some() =>
             {
-                if event.physical_key == PhysicalKey::Code(KeyCode::Escape) {
+                if key == Some(KeyCode::Escape) {
                     self.menu.pending = None;
                     self.menu.perf.cancel_world_opening();
                 }
             }
             _ if self.gui.is_none() || self.menu.pending.is_some() => {}
             WindowEvent::KeyboardInput { event, .. } if self.menu.win.is_some() => {
-                if let PhysicalKey::Code(code) = event.physical_key {
+                if let Some(code) = key {
                     let pressed = event.state == ElementState::Pressed;
                     if code == KeyCode::Escape && pressed {
                         self.menu.win = None;
@@ -1073,13 +1082,16 @@ impl Loading {
             }
             WindowEvent::MouseInput { state, button, .. } if self.menu.options_open => {
                 if state == ElementState::Pressed && self.menu.options.selected_key.is_some() {
-                    let events = self.menu.options.bind_mouse(&mut self.settings, button);
+                    let events = self.menu.options.bind_mouse(
+                        &mut self.settings,
+                        horizon_client_input::winit_adapter::from_winit_mouse(button),
+                    );
                     self.menu_option_events(events);
-                } else if matches!(button, MouseButton::Left | MouseButton::Right) {
+                } else if matches!(button, WinitMouseButton::Left | WinitMouseButton::Right) {
                     if state == ElementState::Pressed {
-                        self.menu.dragging = button == MouseButton::Left;
-                        self.menu_options_click(false, button == MouseButton::Right);
-                    } else if button == MouseButton::Left {
+                        self.menu.dragging = button == WinitMouseButton::Left;
+                        self.menu_options_click(false, button == WinitMouseButton::Right);
+                    } else if button == WinitMouseButton::Left {
                         self.menu.dragging = false;
                         let events = self.menu.options.release();
                         self.menu_option_events(events);
@@ -1088,7 +1100,7 @@ impl Loading {
             }
             WindowEvent::MouseInput {
                 state,
-                button: MouseButton::Left,
+                button: WinitMouseButton::Left,
                 ..
             } => {
                 let batch = HudBatch::new(self.menu_size());
@@ -1121,7 +1133,7 @@ impl Loading {
             // of any button, so the middle one selects it without joining.
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
-                button: MouseButton::Middle,
+                button: WinitMouseButton::Middle,
                 ..
             } => {
                 let batch = HudBatch::new(self.menu_size());
@@ -1159,7 +1171,7 @@ impl Loading {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                if event.physical_key == PhysicalKey::Code(KeyCode::F11) {
+                if key == Some(KeyCode::F11) {
                     self.settings.fullscreen = !self.settings.fullscreen;
                     self.apply_menu_settings();
                     self.save_menu_settings();
@@ -1171,7 +1183,7 @@ impl Loading {
                             .options
                             .shortcut(atlas, s, &mut self.menu.clipboard)
                     });
-                    if !handled && let PhysicalKey::Code(key) = event.physical_key {
+                    if !handled && let Some(key) = key {
                         let events = self.menu.options.key(
                             &mut self.settings,
                             atlas,
@@ -1182,7 +1194,9 @@ impl Loading {
                     }
                 } else {
                     let batch = HudBatch::new(self.menu_size());
-                    let action = self.menu.title_key(&event, (batch.width, batch.height));
+                    let action = self
+                        .menu
+                        .title_key(&event, key, (batch.width, batch.height));
                     self.menu_action(event_loop, action);
                 }
             }

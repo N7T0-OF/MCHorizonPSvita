@@ -10,6 +10,7 @@ use crate::{
     hud::{HudAtlas, HudBatch},
     text::{Style, Text},
 };
+use horizon_client_platform::KeyCode;
 
 /// One GUI call.
 #[derive(Clone, Debug, PartialEq)]
@@ -771,14 +772,8 @@ impl TextField {
         crate::ui::word_position(&self.value, dir, from)
     }
     /// `keyPressed` of a focused, editable box: `Some(changed)` when handled.
-    pub fn key(
-        &mut self,
-        m: &Measure,
-        key: winit::keyboard::KeyCode,
-        shift: bool,
-        ctrl: bool,
-    ) -> Option<bool> {
-        use winit::keyboard::KeyCode as K;
+    pub fn key(&mut self, m: &Measure, key: KeyCode, shift: bool, ctrl: bool) -> Option<bool> {
+        use horizon_client_platform::KeyCode as K;
         let len = chars(&self.value);
         match key {
             K::Backspace | K::Delete => {

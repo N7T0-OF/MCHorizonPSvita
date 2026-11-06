@@ -1032,6 +1032,8 @@ use horizon_client::{
     text::Text,
     world_primitives::WorldPrimitives,
 };
+use horizon_client_platform::KeyCode;
+use horizon_client_platform::MouseButton;
 use horizon_core::{
     geometry::Direction,
     position::BlockPos,
@@ -1052,7 +1054,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use winit::{event::MouseButton, keyboard::KeyCode};
 
 pub(super) struct ObservedScreen {
     id: &'static str,

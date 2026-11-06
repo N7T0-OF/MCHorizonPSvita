@@ -1572,8 +1572,8 @@ impl EditBox {
         }
     }
     /// Keyboard editing shared by every text field. Returns true if handled.
-    pub fn key(&mut self, key: winit::keyboard::KeyCode, ctrl: bool, shift: bool) -> bool {
-        use winit::keyboard::KeyCode as K;
+    pub fn key(&mut self, key: horizon_client_platform::KeyCode, ctrl: bool, shift: bool) -> bool {
+        use horizon_client_platform::KeyCode as K;
         match key {
             K::Backspace => {
                 let n = if ctrl {

@@ -17,6 +17,7 @@ use crate::{
     text::Text,
     ui,
 };
+use horizon_client_platform::KeyCode;
 
 /// The screen's pages, in its order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1949,13 +1950,13 @@ impl GraphicsUi {
     pub fn key_modifiers(
         &mut self,
         s: &mut Settings,
-        key: winit::keyboard::KeyCode,
+        key: KeyCode,
         text: Option<&str>,
         shift: bool,
         (w, h): (f32, f32),
         framebuffer: [i32; 2],
     ) -> (Vec<Action>, bool) {
-        use winit::keyboard::KeyCode as K;
+        use horizon_client_platform::KeyCode as K;
         self.keep(s);
         if key == K::Escape {
             self.can_change_value = false;

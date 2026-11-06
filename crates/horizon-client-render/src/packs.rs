@@ -876,7 +876,7 @@ enum Merge {
 }
 /// The key of a stacked blockstate file: its definitions, bottom first, each
 /// as the pack wrote it.
-pub const BLOCKSTATE_LAYERS: &str = "horizon:layers";
+pub use horizon_terrain_mesh::BLOCKSTATE_LAYERS;
 fn merge_kind(name: &str) -> Option<Merge> {
     let (_, rest) = name.strip_prefix("assets/")?.split_once('/')?;
     if rest == "sounds.json" {

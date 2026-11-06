@@ -14,8 +14,9 @@ use horizon_client::{
     ui::{self, EditBox},
     widgets::{self, Narratable, join_for_narration},
 };
+use horizon_client_platform::KeyCode;
 use horizon_protocol::packets::play::{self, Serverbound as S};
-use winit::{event::KeyEvent, keyboard::PhysicalKey};
+use winit::event::KeyEvent;
 
 pub(super) struct WorldOptions {
     remote: bool,
@@ -1230,7 +1231,7 @@ impl Game<'_> {
         if event.state != winit::event::ElementState::Pressed {
             return;
         }
-        let PhysicalKey::Code(key) = event.physical_key else {
+        let Some(key) = self.window_event_key else {
             return;
         };
         let ctrl = self.has_control_down_with_quirk();
@@ -1265,7 +1266,7 @@ impl Game<'_> {
         }
         if o.view == View::LockQuestion {
             match key {
-                winit::keyboard::KeyCode::Tab => {
+                KeyCode::Tab => {
                     let reverse = shift;
                     o.popup_focus = match o.popup_focus {
                         Some(0) => Some(1),
@@ -1279,15 +1280,9 @@ impl Game<'_> {
                         }
                     };
                 }
-                winit::keyboard::KeyCode::ArrowLeft | winit::keyboard::KeyCode::ArrowUp => {
-                    o.popup_focus = Some(0)
-                }
-                winit::keyboard::KeyCode::ArrowRight | winit::keyboard::KeyCode::ArrowDown => {
-                    o.popup_focus = Some(1)
-                }
-                winit::keyboard::KeyCode::Enter
-                | winit::keyboard::KeyCode::NumpadEnter
-                | winit::keyboard::KeyCode::Space => {
+                KeyCode::ArrowLeft | KeyCode::ArrowUp => o.popup_focus = Some(0),
+                KeyCode::ArrowRight | KeyCode::ArrowDown => o.popup_focus = Some(1),
+                KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
                     self.audio.play_button_click();
                     let yes = o.popup_focus == Some(0);
                     let mut o = self.world_options.take().unwrap();
@@ -1305,7 +1300,7 @@ impl Game<'_> {
         if o.view == View::Restrictions {
             let r = Restrictions::new(&self.gui.atlas.font, chat_vis, (w, h));
             match key {
-                winit::keyboard::KeyCode::Tab => {
+                KeyCode::Tab => {
                     let reverse = shift;
                     if r.action.is_some() {
                         o.popup_focus = match o.popup_focus {
@@ -1323,17 +1318,15 @@ impl Game<'_> {
                         o.popup_focus = Some(1);
                     }
                 }
-                winit::keyboard::KeyCode::ArrowUp => {
+                KeyCode::ArrowUp => {
                     if r.action.is_some() {
                         o.popup_focus = Some(0);
                     } else {
                         o.popup_focus = Some(1);
                     }
                 }
-                winit::keyboard::KeyCode::ArrowDown => o.popup_focus = Some(1),
-                winit::keyboard::KeyCode::Enter
-                | winit::keyboard::KeyCode::NumpadEnter
-                | winit::keyboard::KeyCode::Space => {
+                KeyCode::ArrowDown => o.popup_focus = Some(1),
+                KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
                     self.audio.play_button_click();
                     let action = r.action.is_some() && o.popup_focus == Some(0);
                     o.view = View::Options;
@@ -1350,7 +1343,7 @@ impl Game<'_> {
             return;
         }
         if o.port.focused {
-            if key == winit::keyboard::KeyCode::Tab {
+            if key == KeyCode::Tab {
                 o.port.focused = false;
                 if shift {
                     o.focused_button = Some(Button::Lan);
@@ -1385,7 +1378,7 @@ impl Game<'_> {
             return;
         }
         match key {
-            winit::keyboard::KeyCode::Tab => {
+            KeyCode::Tab => {
                 let reverse = shift;
                 let next = match o.focused_button {
                     Some(cur) => {
@@ -1429,10 +1422,7 @@ impl Game<'_> {
                 };
                 o.focused_button = next;
             }
-            winit::keyboard::KeyCode::ArrowUp
-            | winit::keyboard::KeyCode::ArrowDown
-            | winit::keyboard::KeyCode::ArrowLeft
-            | winit::keyboard::KeyCode::ArrowRight => {
+            KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::ArrowLeft | KeyCode::ArrowRight => {
                 let rects: Vec<(Button, f32, f32, f32)> = visible
                     .into_iter()
                     .filter(|b| o.active(b.0))
@@ -1449,20 +1439,18 @@ impl Game<'_> {
                         let (rx, ry) = (r.1 + r.3 / 2.0, r.2 + 10.0);
                         let (dx, dy) = (rx - cx, ry - cy);
                         let valid = match key {
-                            winit::keyboard::KeyCode::ArrowUp => dy < -4.0,
-                            winit::keyboard::KeyCode::ArrowDown => dy > 4.0,
-                            winit::keyboard::KeyCode::ArrowLeft => dx < -4.0,
-                            winit::keyboard::KeyCode::ArrowRight => dx > 4.0,
+                            KeyCode::ArrowUp => dy < -4.0,
+                            KeyCode::ArrowDown => dy > 4.0,
+                            KeyCode::ArrowLeft => dx < -4.0,
+                            KeyCode::ArrowRight => dx > 4.0,
                             _ => false,
                         };
                         if !valid {
                             continue;
                         }
                         let dist = match key {
-                            winit::keyboard::KeyCode::ArrowUp
-                            | winit::keyboard::KeyCode::ArrowDown => dy.abs() + dx.abs() * 2.0,
-                            winit::keyboard::KeyCode::ArrowLeft
-                            | winit::keyboard::KeyCode::ArrowRight => dx.abs() + dy.abs() * 2.0,
+                            KeyCode::ArrowUp | KeyCode::ArrowDown => dy.abs() + dx.abs() * 2.0,
+                            KeyCode::ArrowLeft | KeyCode::ArrowRight => dx.abs() + dy.abs() * 2.0,
                             _ => f32::MAX,
                         };
                         if best.as_ref().is_none_or(|(_, d)| dist < *d) {
@@ -1476,9 +1464,7 @@ impl Game<'_> {
                     o.focused_button = Some(active_buttons[0]);
                 }
             }
-            winit::keyboard::KeyCode::Enter
-            | winit::keyboard::KeyCode::NumpadEnter
-            | winit::keyboard::KeyCode::Space => {
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
                 if let Some(btn) = o.focused_button {
                     self.audio.play_button_click();
                     let mut o = self.world_options.take().unwrap();
@@ -1550,7 +1536,7 @@ impl Game<'_> {
                     }
                 }
                 None => rules.edit(|b| {
-                    b.key(winit::keyboard::KeyCode::Backspace, false, false);
+                    b.key(KeyCode::Backspace, false, false);
                 }),
             }
             return;
@@ -1566,8 +1552,7 @@ impl Game<'_> {
                 }
             }
             None => {
-                o.port
-                    .key(winit::keyboard::KeyCode::Backspace, false, false);
+                o.port.key(KeyCode::Backspace, false, false);
             }
         }
     }

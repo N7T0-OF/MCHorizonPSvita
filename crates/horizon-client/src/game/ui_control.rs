@@ -9,12 +9,12 @@ use horizon_client::{
     creative::Creative,
     widgets::{self, Kind, Node},
 };
+use horizon_client_platform::MouseButton;
 use serde_json::{Value, json};
 use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
-use winit::event::MouseButton;
 
 pub(super) const HELP: &[&str] = &[
     "ui                             every widget of the open screen: id, kind, label, bounds, value",

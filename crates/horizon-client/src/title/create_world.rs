@@ -6,6 +6,7 @@ use crate::{
     text::Text,
     ui,
 };
+use horizon_client_platform::KeyCode;
 
 /// MenuTabBar.HEIGHT: the header above the tab area.
 const TAB_BAR: f32 = 24.0;
@@ -266,8 +267,7 @@ pub(super) fn tab_count() -> usize {
 }
 /// `InputConstants.Key.getNumericKeyValue`: the digit a key stands for, on the
 /// number row or the keypad, and 0 for the `0` key. `None` for every other key.
-fn numeric_key(key: winit::keyboard::KeyCode) -> Option<u8> {
-    use winit::keyboard::KeyCode;
+fn numeric_key(key: KeyCode) -> Option<u8> {
     Some(match key {
         KeyCode::Digit0 | KeyCode::Numpad0 => 0,
         KeyCode::Digit1 | KeyCode::Numpad1 => 1,
@@ -288,15 +288,11 @@ fn numeric_key(key: winit::keyboard::KeyCode) -> Option<u8> {
 /// or back with Shift, wrapping. Every Create World tab is active, so the
 /// walk never has to skip one. `None` where the key is neither a digit nor
 /// Tab, which the bar ignores and the screen reads itself.
-pub(super) fn next_tab_index(
-    tab: usize,
-    key: winit::keyboard::KeyCode,
-    shift: bool,
-) -> Option<usize> {
+pub(super) fn next_tab_index(tab: usize, key: KeyCode, shift: bool) -> Option<usize> {
     if let Some(digit) = numeric_key(key) {
         return Some((i32::from(digit) - 1).rem_euclid(10) as usize);
     }
-    if key != winit::keyboard::KeyCode::Tab {
+    if key != KeyCode::Tab {
         return None;
     }
     let next = tab as i32 + if shift { -1 } else { 1 };

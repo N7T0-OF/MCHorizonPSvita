@@ -13,6 +13,7 @@ use horizon_client::{
     pose::{Dimensions, Pose},
     sprint::Keys,
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::{
     geometry::{Aabb, Vec3, VoxelShape, trig},
     random::RandomSource,
@@ -295,8 +296,7 @@ impl Game<'_> {
         if species == Species::SkeletonHorse && !m.extra.tame {
             return false;
         }
-        let sneaking =
-            self.keys.held(Action::Sneak) || self.keys.raw(&winit::keyboard::KeyCode::ShiftRight);
+        let sneaking = self.keys.held(Action::Sneak) || self.keys.raw(&KeyCode::ShiftRight);
         // Horse / ZombieHorse.mobInteract: food is fed, and anything else in
         // hand makes an untamed one mad instead of seating the player.
         let dandelion = [self.held(), self.offhand.as_ref()]

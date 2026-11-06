@@ -397,6 +397,7 @@ fn release_quiet_sources(inner: &Inner) {
         freed = true;
     }
     if freed {
+        #[cfg(feature = "mimalloc")]
         crate::release_free_memory();
     }
 }
@@ -433,6 +434,7 @@ fn work(inner: &Inner, worker: usize) {
             // A panicking job loses its own work, not the worker: the panic
             // hook has already reported it.
             let _ = catch_unwind(AssertUnwindSafe(|| {
+                #[cfg(feature = "mimalloc")]
                 let _tag =
                     crate::HEAP_CENSUS.then(|| crate::heap_census::tag(entry.source.label()));
                 entry.source.run(worker)
@@ -498,6 +500,7 @@ fn work(inner: &Inner, worker: usize) {
         // The allocator keeps freed pages until memory runs short: hand back
         // what this worker just freed (its own heap), and the shared arenas'
         // once every worker has.
+        #[cfg(feature = "mimalloc")]
         crate::release_free_memory();
     }
 }

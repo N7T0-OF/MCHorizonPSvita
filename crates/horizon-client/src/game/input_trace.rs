@@ -17,10 +17,7 @@ use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
-use winit::{
-    event::{ElementState, MouseScrollDelta, WindowEvent},
-    keyboard::PhysicalKey,
-};
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 
 pub(super) const HELP: &[&str] = &[
     "input-log [--since SEQ] [--limit N] [--origin user|agent|game]  recent input and who caused it",
@@ -445,7 +442,7 @@ impl Game<'_> {
                 is_synthetic,
                 ..
             } => {
-                let PhysicalKey::Code(code) = event.physical_key else {
+                let Some(code) = self.window_event_key else {
                     return;
                 };
                 let Some(name) = keybinds::key_name(code) else {
@@ -473,7 +470,9 @@ impl Game<'_> {
             WindowEvent::MouseInput { state, button, .. } => self.note_input(
                 origin,
                 TraceKind::Mouse {
-                    button: keybinds::mouse_name(*button),
+                    button: keybinds::mouse_name(
+                        horizon_client_input::winit_adapter::from_winit_mouse(*button),
+                    ),
                     action: match state {
                         ElementState::Pressed => "down".to_owned(),
                         ElementState::Released => "up".to_owned(),

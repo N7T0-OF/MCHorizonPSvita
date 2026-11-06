@@ -4268,9 +4268,9 @@ impl OptionsUi {
             // Waiting on a key: a mouse button binds, as on Key Binds.
             if self.selected_key.is_some() && !drag {
                 let button = if right {
-                    winit::event::MouseButton::Right
+                    horizon_client_platform::MouseButton::Right
                 } else {
-                    winit::event::MouseButton::Left
+                    horizon_client_platform::MouseButton::Left
                 };
                 return self.bind_mouse(s, button);
             }
@@ -4406,9 +4406,9 @@ impl OptionsUi {
         // Key Binds: a mouse button pressed while waiting binds it.
         if self.selected_key.is_some() {
             let button = if right {
-                winit::event::MouseButton::Right
+                horizon_client_platform::MouseButton::Right
             } else {
-                winit::event::MouseButton::Left
+                horizon_client_platform::MouseButton::Left
             };
             return self.bind_mouse(s, button);
         }
@@ -5124,7 +5124,7 @@ impl OptionsUi {
     pub fn bind_mouse(
         &mut self,
         s: &mut Settings,
-        button: winit::event::MouseButton,
+        button: horizon_client_platform::MouseButton,
     ) -> Vec<Event> {
         self.bind_key(s, keybinds::mouse_name(button))
     }
@@ -5134,7 +5134,7 @@ impl OptionsUi {
         &mut self,
         s: &mut Settings,
         atlas: &HudAtlas,
-        key: winit::keyboard::KeyCode,
+        key: horizon_client_platform::KeyCode,
         text: Option<&str>,
     ) -> Vec<Event> {
         self.key_modifiers(s, atlas, key, text, false)
@@ -5145,11 +5145,11 @@ impl OptionsUi {
         &mut self,
         s: &mut Settings,
         atlas: &HudAtlas,
-        key: winit::keyboard::KeyCode,
+        key: horizon_client_platform::KeyCode,
         text: Option<&str>,
         shift: bool,
     ) -> Vec<Event> {
-        use winit::keyboard::KeyCode as K;
+        use horizon_client_platform::KeyCode as K;
         if self.page() == Page::HdrCalibration
             && let Some(c) = &mut self.calibration
         {
@@ -6022,8 +6022,8 @@ mod tests {
 
     #[test]
     fn a_horizon_packs_float_and_int_options_are_sliders_saved_on_release() {
+        use horizon_client_platform::KeyCode;
         use horizon_shader_api::{OptionKind, PackOption};
-        use winit::keyboard::KeyCode;
         let atlas = atlas();
         let size = (960.0, 540.0);
         let option = |id: &str, kind| PackOption {
@@ -6132,7 +6132,7 @@ mod tests {
 
     #[test]
     fn resource_reload_error_blocks_options_until_dismissed() {
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::KeyCode;
         let atlas = atlas();
         let mut settings = Settings::default();
         let mut ui = OptionsUi {
@@ -6517,7 +6517,12 @@ mod tests {
             false,
         );
         assert_eq!(
-            ui.key(&mut s, &atlas, winit::keyboard::KeyCode::KeyR, Some("r")),
+            ui.key(
+                &mut s,
+                &atlas,
+                horizon_client_platform::KeyCode::KeyR,
+                Some("r")
+            ),
             vec![Event::Changed]
         );
         assert_eq!(key_label(&mut ui, &s).unwrap().0, "R");
@@ -7019,7 +7024,7 @@ mod tests {
         );
         assert_eq!(ui.selected_key, Some(crate::extras::SORT_KEY));
         assert_eq!(
-            ui.key(&mut s, &atlas, winit::keyboard::KeyCode::KeyC, None),
+            ui.key(&mut s, &atlas, horizon_client_platform::KeyCode::KeyC, None),
             vec![Event::Changed]
         );
         assert_eq!(s.extras.sort_key, "key.keyboard.c");
@@ -7034,7 +7039,12 @@ mod tests {
         assert!(content > bottom - top);
         assert_eq!(ui.scroll, content - (bottom - top));
         assert_eq!(
-            ui.key(&mut s, &atlas, winit::keyboard::KeyCode::Escape, None),
+            ui.key(
+                &mut s,
+                &atlas,
+                horizon_client_platform::KeyCode::Escape,
+                None
+            ),
             vec![Event::Changed]
         );
         assert_eq!(ui.page(), Page::Horizon);
@@ -7368,7 +7378,7 @@ mod tests {
     /// page is gone after Enter and the language is already applied.
     #[test]
     fn the_selection_key_picks_a_language_and_finishes_the_page() {
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::KeyCode;
         let atlas = atlas();
         let rows = languages();
         let code = {
@@ -7656,7 +7666,7 @@ mod tests {
     #[test]
     fn extras_and_vanilla_bindings_accept_mouse_buttons() {
         use crate::extras::{Extras, SORT_KEY};
-        use winit::event::MouseButton;
+        use horizon_client_platform::MouseButton;
         for button in [
             MouseButton::Left,
             MouseButton::Right,
@@ -8057,7 +8067,7 @@ mod tests {
     #[test]
     fn the_graphics_shaders_page_opens_the_shader_pack_list() {
         use crate::graphics_ui::{H, Item, Target};
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::KeyCode;
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi {
@@ -8176,7 +8186,7 @@ mod tests {
 
     #[test]
     fn slider_keyboard_navigation_and_selection_toggle_parity() {
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::KeyCode;
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
@@ -8249,7 +8259,7 @@ mod tests {
 
     #[test]
     fn escape_closes_options_with_search_focused() {
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::KeyCode;
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
@@ -8319,7 +8329,7 @@ mod tests {
 
     #[test]
     fn horizon_pages_slider_and_wheel_parity() {
-        use winit::keyboard::KeyCode as K;
+        use horizon_client_platform::KeyCode as K;
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
@@ -8573,7 +8583,7 @@ mod tests {
 
     #[test]
     fn options_keyboard_space_enter_emits_button_click_for_cycle_and_default_buttons() {
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::KeyCode;
         let mut ui = OptionsUi::default();
         let mut s = Settings::default();
         let atlas = atlas();

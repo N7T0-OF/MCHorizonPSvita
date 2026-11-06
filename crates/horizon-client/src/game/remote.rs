@@ -30,6 +30,8 @@ use horizon_client::{
     tab_list::SPECTATOR,
     world::World,
 };
+use horizon_client_platform::KeyCode;
+use horizon_client_platform::MouseButton;
 use horizon_core::{geometry::Vec3, random::RandomSource};
 use horizon_protocol::{
     entity_data::{ITEM_ENTITY_ITEM, Value},
@@ -55,7 +57,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use winit::{event::MouseButton, keyboard::KeyCode};
 
 type BuiltinCache = Vec<(std::path::PathBuf, Arc<Builtin>)>;
 static BUILTIN: std::sync::Mutex<BuiltinCache> = std::sync::Mutex::new(Vec::new());

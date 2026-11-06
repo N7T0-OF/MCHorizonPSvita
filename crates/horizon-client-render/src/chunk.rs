@@ -221,22 +221,15 @@ impl Default for ColumnLayout {
 /// global palette).
 pub const BIOME_STRATEGY: Strategy = Strategy::biomes(8);
 
-/// Bits of the block states' global palette: 16 for vanilla's 35,723 states
-/// (what vanilla servers and clients send), more when content mods add states
-/// past 65,536 (docs/modpacks.md). Set once, before the first chunk.
-static BLOCK_BITS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(16);
-/// States in the registry, set with [`BLOCK_BITS`].
-static BLOCK_STATES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
-
 /// Block states are `PalettedContainer`s over the registry: vanilla's 16-bit
 /// global palette, wider with enough content mods.
 pub fn block_strategy() -> Strategy {
-    Strategy::blocks(BLOCK_BITS.load(std::sync::atomic::Ordering::Relaxed))
+    horizon_terrain_mesh::chunk::block_strategy()
 }
 
 /// Whether the registry has this state. Every id is known until the registry is loaded.
 pub fn known_block_state(id: u32) -> bool {
-    id < BLOCK_STATES.load(std::sync::atomic::Ordering::Relaxed)
+    horizon_terrain_mesh::chunk::known_block_state(id)
 }
 
 /// A server's block container in our palette width. Ids past our registry (a
@@ -279,12 +272,7 @@ pub fn free_columns<T: Send + 'static>(columns: T, count: usize) {
 
 /// Sizes the block states' global palette for a registry of `states`.
 pub fn set_block_states(states: usize) {
-    let bits = horizon_core::paletted::ceil_log2(states).max(16);
-    BLOCK_BITS.store(bits, std::sync::atomic::Ordering::Relaxed);
-    BLOCK_STATES.store(
-        u32::try_from(states).unwrap_or(u32::MAX),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    horizon_terrain_mesh::chunk::set_block_states(states);
     forget_shared();
 }
 
@@ -293,7 +281,7 @@ pub fn set_block_states(states: usize) {
 /// (block, biome, light). A tall column is mostly such sections: air with
 /// full sky light above the terrain. Edits copy them (`Arc::make_mut`).
 type SharedSections = std::collections::HashMap<(u32, u32, u8), Arc<Section>>;
-static SHARED: std::sync::Mutex<Option<SharedSections>> = std::sync::Mutex::new(None);
+static SHARED: std::sync::Mutex<Option<(u32, SharedSections)>> = std::sync::Mutex::new(None);
 
 /// Replaces the uniform sections of `sections` with the shared ones.
 pub fn share_uniform(sections: &mut [Arc<Section>]) {
@@ -309,7 +297,12 @@ pub fn share_uniform(sections: &mut [Arc<Section>]) {
     let Ok(mut shared) = SHARED.lock() else {
         return;
     };
-    let shared = shared.get_or_insert_with(Default::default);
+    let generation = horizon_terrain_mesh::chunk::block_state_generation();
+    let shared = shared.get_or_insert_with(|| (generation, Default::default()));
+    if shared.0 != generation {
+        *shared = (generation, Default::default());
+    }
+    let shared = &mut shared.1;
     for section in sections {
         let Some(k) = key(section) else {
             continue;
@@ -552,6 +545,24 @@ impl ColumnCensus {
             + self.column_bytes
     }
 }
+impl horizon_terrain_mesh::MeshSectionView for Section {
+    fn is_uniform_air(&self) -> bool {
+        self.is_uniform(0)
+    }
+
+    fn unpack(&self, out: &mut [u32; 4096]) {
+        Section::unpack(self, out);
+    }
+
+    fn get_run(&self, at: usize, out: &mut [u32]) {
+        self.blocks.get_run(at, out);
+    }
+
+    fn copy_light_run(&self, at: usize, out: &mut [u8]) {
+        self.light.copy_run(at, out);
+    }
+}
+
 #[derive(Clone)]
 pub struct Chunk {
     pub x: i32,
@@ -814,6 +825,37 @@ impl Chunk {
             ((qy & 3) << 4 | (qz & 3) << 2 | (qx & 3)) as usize,
             u32::from(biome),
         );
+    }
+}
+
+impl horizon_terrain_mesh::MeshChunk for Chunk {
+    fn x(&self) -> i32 {
+        self.x
+    }
+
+    fn z(&self) -> i32 {
+        self.z
+    }
+
+    fn min_y(&self) -> i32 {
+        Chunk::min_y(self)
+    }
+
+    fn section_at(&self, world_y: i32) -> Result<&dyn horizon_terrain_mesh::MeshSectionView, u8> {
+        Chunk::section_at(self, world_y)
+            .map(|section| section as &dyn horizon_terrain_mesh::MeshSectionView)
+    }
+
+    fn get(&self, x: i32, y: i32, z: i32) -> u32 {
+        Chunk::get(self, x, y, z)
+    }
+
+    fn light(&self, x: i32, y: i32, z: i32) -> u8 {
+        Chunk::light(self, x, y, z)
+    }
+
+    fn biome(&self, x: i32, y: i32, z: i32) -> u16 {
+        Chunk::biome(self, x, y, z)
     }
 }
 

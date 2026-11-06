@@ -26,6 +26,7 @@ use horizon_client::{
     motion::{MotionEvent, MotionWorld, PlayerMotion},
     pose::Dimensions,
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::{
     geometry::{Aabb, Vec3},
     random::RandomSource,
@@ -35,7 +36,6 @@ use horizon_protocol::{
     text::literal,
 };
 use horizon_world::entity_move::EntityMoveWorld;
-use winit::keyboard::KeyCode;
 
 /// Per-guest state of the gameplay code that lives outside `Guest`.
 #[derive(Default)]

@@ -1721,11 +1721,11 @@ impl ChatScreen {
         m: &Measure,
         c: &Commands,
         history: &[String],
-        key: winit::keyboard::KeyCode,
+        key: horizon_client_platform::KeyCode,
         shift: bool,
         ctrl: bool,
     ) -> ChatAction {
-        use winit::keyboard::KeyCode as K;
+        use horizon_client_platform::KeyCode as K;
         if self.suggestions_key(m, c, key, shift) {
             return ChatAction::None;
         }
@@ -1753,7 +1753,7 @@ impl ChatScreen {
         &mut self,
         m: &Measure,
         c: &Commands,
-        key: winit::keyboard::KeyCode,
+        key: horizon_client_platform::KeyCode,
         shift: bool,
         ctrl: bool,
     ) -> bool {
@@ -1773,10 +1773,10 @@ impl ChatScreen {
         &mut self,
         m: &Measure,
         c: &Commands,
-        key: winit::keyboard::KeyCode,
+        key: horizon_client_platform::KeyCode,
         shift: bool,
     ) -> bool {
-        use winit::keyboard::KeyCode as K;
+        use horizon_client_platform::KeyCode as K;
         if let Some(mut l) = self.suggestions.take() {
             let handled = match key {
                 K::ArrowUp | K::ArrowDown => {

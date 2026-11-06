@@ -13,12 +13,12 @@ use horizon_client::{
     hud::HudBatch,
     text::Text,
 };
+use horizon_client_platform::KeyCode;
 use horizon_protocol::{
     packets::play::{self, Serverbound as S},
     secure_chat::{Body, Encoder, LastSeenTracker, Signature},
 };
 use std::sync::Arc;
-use winit::keyboard::KeyCode;
 
 /// ClientPacketListener.sendChatAcknowledgement's threshold.
 const ACK_AFTER: i32 = 64;

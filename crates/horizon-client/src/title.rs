@@ -3392,7 +3392,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
     /// whether to play the click sound, as a tab that changed does.
     pub fn tab_bar_key(
         &mut self,
-        key: winit::keyboard::KeyCode,
+        key: horizon_client_platform::KeyCode,
         ctrl: bool,
         shift: bool,
     ) -> Option<bool> {
@@ -3966,10 +3966,15 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
         self.edit_field(|edit| edit.insert_text(text));
     }
     pub fn backspace(&mut self) {
-        self.field_key(winit::keyboard::KeyCode::Backspace, false, false);
+        self.field_key(horizon_client_platform::KeyCode::Backspace, false, false);
     }
     /// EditBox.keyPressed: moving and deleting in the focused field.
-    pub fn field_key(&mut self, key: winit::keyboard::KeyCode, ctrl: bool, shift: bool) -> bool {
+    pub fn field_key(
+        &mut self,
+        key: horizon_client_platform::KeyCode,
+        ctrl: bool,
+        shift: bool,
+    ) -> bool {
         if self.preparing {
             return false;
         }
@@ -4289,8 +4294,13 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
         }
     }
     /// 2D spatial arrow key navigation across enabled buttons.
-    pub fn arrow_key(&mut self, key: winit::keyboard::KeyCode, size: (f32, f32), shift: bool) {
-        use winit::keyboard::KeyCode;
+    pub fn arrow_key(
+        &mut self,
+        key: horizon_client_platform::KeyCode,
+        size: (f32, f32),
+        shift: bool,
+    ) {
+        use horizon_client_platform::KeyCode;
         if self.rules.get_mut().is_some() {
             return;
         }

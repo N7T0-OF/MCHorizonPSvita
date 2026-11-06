@@ -16,6 +16,7 @@ use horizon_client::{
     items::ItemStack,
     merchant::{self, MerchantOffer, TradeContext},
 };
+use horizon_client_platform::KeyCode;
 
 /// The merchant screen is 100 px wider than the 176-px menus it shares an origin with.
 const SHIFT: f32 = -50.0;
@@ -545,8 +546,8 @@ impl Game<'_> {
     /// Space presses it again, key repeats included, so holding Space
     /// refills the payment slots after every trade. Focus stays on the
     /// button through slot clicks (`ContainerEventHandler.mouseClicked`).
-    pub(super) fn merchant_key(&mut self, key: winit::keyboard::KeyCode) -> bool {
-        use winit::keyboard::KeyCode;
+    pub(super) fn merchant_key(&mut self, key: KeyCode) -> bool {
+        use horizon_client_platform::KeyCode;
         if !matches!(key, KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space) {
             return false;
         }

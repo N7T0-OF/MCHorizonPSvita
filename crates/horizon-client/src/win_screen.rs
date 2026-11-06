@@ -28,8 +28,8 @@ pub enum Key {
     RightControl,
 }
 impl Key {
-    pub fn from_code(code: winit::keyboard::KeyCode) -> Option<Self> {
-        use winit::keyboard::KeyCode;
+    pub fn from_code(code: horizon_client_platform::KeyCode) -> Option<Self> {
+        use horizon_client_platform::KeyCode;
         match code {
             KeyCode::ArrowUp => Some(Self::Up),
             KeyCode::Space => Some(Self::Space),

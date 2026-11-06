@@ -44,7 +44,7 @@ fn stack_json(s: &ItemStack) -> Value {
 
 impl Game<'_> {
     fn click_at(&mut self, x: f32, y: f32, right: bool, shift: bool) {
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::KeyCode;
         let saved = self.cursor;
         self.cursor = (x, y);
         let held = shift.then(|| {

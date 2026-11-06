@@ -11,8 +11,8 @@ use horizon_client::{
     text::Text,
     ui::{self, EditBox, Scroll},
 };
+use horizon_client_platform::KeyCode;
 use winit::event::{ElementState, KeyEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `HeaderAndFooterLayout(this, 61, 33)`.
 const HEADER: f32 = 61.0;
@@ -455,7 +455,7 @@ impl Game<'_> {
         if event.state != ElementState::Pressed {
             return;
         }
-        let PhysicalKey::Code(key) = event.physical_key else {
+        let Some(key) = self.window_event_key else {
             return;
         };
         if key == KeyCode::Escape {

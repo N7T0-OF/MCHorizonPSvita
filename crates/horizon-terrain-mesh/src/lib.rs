@@ -1,8 +1,69 @@
 //! Portable terrain section meshes, side sorting, and compact vertex layouts.
+pub mod assets;
+pub mod atlas_sources;
+pub mod biome;
+pub mod cit_assets;
+pub mod connected;
+pub mod fusion;
+pub mod mesher;
+pub mod mipmap;
+pub mod model_library;
+pub mod models;
+pub mod native_emissive;
+pub mod par;
+pub mod spans;
+mod sprite_cache;
+pub mod sprites;
+#[cfg(test)]
+mod test_chunk;
+pub mod packs {
+    pub use crate::BLOCKSTATE_LAYERS;
+}
+pub mod chunk {
+    #[cfg(test)]
+    pub use crate::test_chunk::{Chunk, ColumnLayout, Light};
+
+    use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+
+    static BLOCK_BITS: AtomicU8 = AtomicU8::new(16);
+    static BLOCK_STATES: AtomicU32 = AtomicU32::new(u32::MAX);
+    static BLOCK_STATE_GENERATION: AtomicU32 = AtomicU32::new(0);
+
+    pub fn block_strategy() -> horizon_core::paletted::Strategy {
+        horizon_core::paletted::Strategy::blocks(BLOCK_BITS.load(Ordering::Relaxed))
+    }
+
+    pub fn known_block_state(id: u32) -> bool {
+        id < BLOCK_STATES.load(Ordering::Relaxed)
+    }
+
+    pub fn set_block_states(states: usize) {
+        let bits = horizon_core::paletted::ceil_log2(states).max(16);
+        BLOCK_BITS.store(bits, Ordering::Relaxed);
+        BLOCK_STATES.store(u32::try_from(states).unwrap_or(u32::MAX), Ordering::Relaxed);
+        BLOCK_STATE_GENERATION.fetch_add(1, Ordering::Release);
+    }
+
+    /// Generation for caches whose keys depend on the block registry.
+    #[doc(hidden)]
+    pub fn block_state_generation() -> u32 {
+        BLOCK_STATE_GENERATION.load(Ordering::Acquire)
+    }
+}
+pub mod graphics {
+    pub use crate::LeafCullingMode;
+}
+pub use horizon_client_core::Result;
+pub use horizon_items::{blocks, items};
+
+mod leaf_culling_mode;
+mod mesh_chunk;
 pub mod packed;
 mod sides;
 
 pub use horizon_terrain_data::{TILED_UV_STEPS, TerrainVertex, UV_STEPS};
+pub use leaf_culling_mode::LeafCullingMode;
+pub use mesh_chunk::{MeshChunk, MeshSectionView, block_index};
 pub use sides::{Part, Sides, group_parts, sort_tinted};
 
 /// Set on a terrain vertex's sprite layer when its texture alpha must be ignored.
@@ -10,6 +71,8 @@ pub const OPAQUE_LAYER: u16 = 1 << 15;
 
 /// VisGraph's fully connected visibility value.
 pub const ALL_VISIBLE: u64 = (1 << 36) - 1;
+/// Key of Horizon's stacked blockstate definitions in parsed asset packs.
+pub const BLOCKSTATE_LAYERS: &str = "horizon:layers";
 
 /// The mesh data produced by Horizon's section mesher and consumed by render backends.
 pub struct SectionMesh {

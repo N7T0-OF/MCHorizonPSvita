@@ -35,6 +35,7 @@ use horizon_client::{
     stations::{self, AnvilResult, EnchantOffers},
     text::Text,
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::random::{LegacyRandom, RandomSource};
 
 /// The book above the enchanting table's offers: `EnchantmentScreen`'s
@@ -1332,7 +1333,7 @@ impl Game<'_> {
         self.remote_anvil_rename();
     }
     /// `AnvilScreen.keyPressed`: the rename box handles the key.
-    pub(super) fn station_key(&mut self, key: winit::keyboard::KeyCode) -> bool {
+    pub(super) fn station_key(&mut self, key: KeyCode) -> bool {
         let (ctrl, shift) = (self.has_control_down(), self.has_shift_down());
         let Some(s) = self.station.as_mut() else {
             return false;

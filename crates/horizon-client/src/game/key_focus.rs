@@ -16,7 +16,7 @@ use horizon_client::{
     hud::{HudAtlas, HudBatch, rgba},
     widgets::{self, Kind, Target},
 };
-use winit::keyboard::KeyCode;
+use horizon_client_platform::KeyCode;
 
 /// A navigation key, as `Screen.keyPressed` and the widgets read it.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -14,6 +14,7 @@ horizon-assets = { path = "../horizon-assets" }
 horizon-bench = { path = "../horizon-bench" }
 horizon-client-core = { path = "../horizon-client-core" }
 horizon-client-input = { path = "../horizon-client-input" }
+horizon-client-platform = { path = "../horizon-client-platform" }
 horizon-command = { path = "../horizon-command" }
 horizon-core = { path = "../horizon-core" }
 horizon-hdr = { path = "../horizon-hdr" }
@@ -84,4 +85,5 @@ workspace = true
 
 [dev-dependencies]
 horizon-items = { path = "../horizon-items", features = ["test-support"] }
+horizon-terrain-mesh = { path = "../horizon-terrain-mesh", features = ["test-support"] }
 naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out", "glsl-out", "msl-out", "spv-out"] }

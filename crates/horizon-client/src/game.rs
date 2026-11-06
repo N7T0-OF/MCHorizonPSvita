@@ -426,6 +426,7 @@ use horizon_client::{
     vanillagen::VanillaTerrain,
     world::World,
 };
+use horizon_client_platform::{KeyCode, Modifiers, MouseButton};
 use horizon_core::{
     biome::{BiomeZoom, obfuscate_seed},
     geometry::{Aabb, Direction},
@@ -478,9 +479,12 @@ use std::{
 use winit::{
     application::ApplicationHandler,
     error::EventLoopError,
-    event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{
+        DeviceEvent, DeviceId, ElementState, MouseButton as WinitMouseButton, MouseScrollDelta,
+        WindowEvent,
+    },
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{KeyCode as WinitKeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
 };
 
@@ -2347,8 +2351,8 @@ fn follow_keymap(event: &mut WindowEvent) {
         && let Key::Named(named) = &event.logical_key
     {
         let code = match named {
-            NamedKey::Escape => KeyCode::Escape,
-            NamedKey::CapsLock => KeyCode::CapsLock,
+            NamedKey::Escape => WinitKeyCode::Escape,
+            NamedKey::CapsLock => WinitKeyCode::CapsLock,
             _ => return,
         };
         event.physical_key = PhysicalKey::Code(code);
@@ -2357,7 +2361,7 @@ fn follow_keymap(event: &mut WindowEvent) {
 
 /// Q throws the whole stack with Control down: the same modifier word the
 /// screens read (`has_control_down`), never a latched sprint toggle.
-fn drop_whole_stack(modifiers: winit::keyboard::ModifiersState) -> bool {
+fn drop_whole_stack(modifiers: Modifiers) -> bool {
     modifiers.control_key()
 }
 
@@ -2365,7 +2369,7 @@ fn drop_whole_stack(modifiers: winit::keyboard::ModifiersState) -> bool {
 /// input hooks: `GLFW_MOD_SHIFT` 1, `GLFW_MOD_CONTROL` 2, `GLFW_MOD_ALT` 4,
 /// `GLFW_MOD_SUPER` 8 — the word a NeoForge listener reads off its event
 /// (`getModifiers`). The lock keys are not modifiers there.
-fn glfw_modifiers(modifiers: winit::keyboard::ModifiersState) -> u32 {
+fn glfw_modifiers(modifiers: Modifiers) -> u32 {
     let mut bits = 0;
     if modifiers.shift_key() {
         bits |= 1;
@@ -2538,6 +2542,9 @@ struct Game<'a> {
     keys: horizon_client::held::HeldKeys,
     // Physical input is separate from remapped and toggled movement keys.
     physical_keys: HashSet<KeyCode>,
+    /// Physical key for the WindowEvent currently being dispatched, already translated once at
+    /// the Winit boundary. Screen handlers still receive Winit's WindowEvent for text/modifiers.
+    window_event_key: Option<KeyCode>,
     physical_buttons: HashSet<MouseButton>,
     drag_button: Option<MouseButton>,
     /// Control + left click as a right click (macOS).
@@ -2576,7 +2583,7 @@ struct Game<'a> {
     /// (`Minecraft.lastActiveTime`: pausing waits 500 ms).
     focus_lost: Option<Instant>,
     /// The keyboard's modifier state (`KeyEvent.modifiers`).
-    modifiers: winit::keyboard::ModifiersState,
+    modifiers: Modifiers,
     /// The window's fullscreen request and reported state.
     fullscreen: horizon_client::window::FullscreenState,
     /// The monitor whose video modes `settings.video_modes` holds.
@@ -17964,43 +17971,63 @@ impl Game<'_> {
         if !ours {
             return;
         }
+        self.window_event_key = None;
         follow_keymap(&mut event);
+        if let WindowEvent::KeyboardInput { event, .. } = &event
+            && let PhysicalKey::Code(key) = event.physical_key
+        {
+            self.window_event_key = Some(
+                horizon_client_input::winit_adapter::from_winit_key(key).unwrap_or(KeyCode::Other),
+            );
+        }
         // MacosUtil.setCtrlClickEmulatesRightClick: Control + left click is a right click.
         if let WindowEvent::MouseInput { state, button, .. } = &mut event
-            && *button == MouseButton::Left
+            && *button == WinitMouseButton::Left
             && self.right_click_emulation.is_right_click(
                 *state == ElementState::Pressed,
                 self.modifiers.control_key(),
                 cfg!(target_os = "macos") && self.settings.ctrl_click_emulates_right_click,
             )
         {
-            *button = MouseButton::Right;
+            *button = WinitMouseButton::Right;
         }
         // Who caused it, before the event is handled: the trace wants the
         // window's own keys, never the ones the socket made up.
         self.trace_window_event(origin, &event);
         if let WindowEvent::KeyboardInput { event, .. } = &event
-            && let PhysicalKey::Code(key) = event.physical_key
+            && let Some(key) = self.window_event_key
         {
             if event.state == ElementState::Pressed {
                 self.physical_keys.insert(key);
-                horizon_client::keybinds::learn_layout(event);
+                use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+                let unmodified_text = match event.key_without_modifiers() {
+                    winit::keyboard::Key::Character(text) => Some(text.to_string()),
+                    winit::keyboard::Key::Dead(Some(character)) => Some(character.to_string()),
+                    _ => None,
+                };
+                horizon_client::keybinds::learn_layout(key, unmodified_text.as_deref());
             } else {
                 self.physical_keys.remove(&key);
             }
         }
         if let WindowEvent::MouseInput { state, button, .. } = &event {
             if *state == ElementState::Pressed {
-                self.physical_buttons.insert(*button);
+                self.physical_buttons.insert(
+                    horizon_client_input::winit_adapter::from_winit_mouse(*button),
+                );
             } else {
-                self.physical_buttons.remove(button);
+                self.physical_buttons.remove(
+                    &horizon_client_input::winit_adapter::from_winit_mouse(*button),
+                );
             }
         }
         let mouse = if !self.pad_synthetic_input()
             && let WindowEvent::MouseInput { state, button, .. } = &event
         {
             Some((
-                glfw_button(*button),
+                glfw_button(horizon_client_input::winit_adapter::from_winit_mouse(
+                    *button,
+                )),
                 *state == ElementState::Pressed,
                 glfw_modifiers(self.modifiers),
             ))
@@ -18033,7 +18060,7 @@ impl Game<'_> {
             self.drag_button = None;
         }
         if let WindowEvent::ModifiersChanged(m) = &event {
-            self.modifiers = m.state();
+            self.modifiers = horizon_client_input::winit_adapter::from_winit_modifiers(m.state());
             horizon_client_input::modifiers::reconcile(
                 self.modifiers,
                 &mut self.physical_keys,
@@ -18076,7 +18103,7 @@ impl Game<'_> {
         // Fullscreen is a window shortcut, before screens consume keyboard input.
         if let WindowEvent::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
-            && let PhysicalKey::Code(key) = event.physical_key
+            && let Some(key) = self.window_event_key
             && horizon_client::keybinds::key_name(key)
                 == Some(self.settings.keys.get("key.fullscreen"))
             && !(self.screen == Screen::Options && self.options_waiting_for_key())
@@ -18092,7 +18119,7 @@ impl Game<'_> {
         // it works with chat, a sign or a book open.
         if let WindowEvent::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
-            && let PhysicalKey::Code(key) = event.physical_key
+            && let Some(key) = self.window_event_key
         {
             self.last_input = Instant::now();
             if self.screenshot_shortcut(key, event.repeat) {
@@ -18103,7 +18130,7 @@ impl Game<'_> {
         if let WindowEvent::KeyboardInput {
             event: key_event, ..
         } = &event
-            && let PhysicalKey::Code(key) = key_event.physical_key
+            && let Some(key) = self.window_event_key
         {
             use horizon_client::debug_keys::KeyAction;
             let action = match (key_event.state, key_event.repeat) {
@@ -18142,7 +18169,12 @@ impl Game<'_> {
         // The screen's narration hears of the input before the screen takes
         // it; the pointer events the keyboard's focus sends aren't the mouse.
         if !self.key_focus_quiet() {
-            narrator::narrate_input(&mut self.narration, &event, self.cursor);
+            narrator::narrate_input(
+                &mut self.narration,
+                &event,
+                self.cursor,
+                self.window_event_key,
+            );
         }
         // FileFixerProgressScreen: Cancel is the only way out (`shouldCloseOnEsc`
         // is false), so it takes the pointer and Escape does nothing.
@@ -18159,7 +18191,7 @@ impl Game<'_> {
                 }
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,
-                    button: MouseButton::Left,
+                    button: WinitMouseButton::Left,
                     ..
                 } if !upgrade.is_canceled() => {
                     let (w, h) = self.gui_size();
@@ -18178,7 +18210,7 @@ impl Game<'_> {
         if self.pending_entry.is_some()
             && matches!(&event, WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed
-                    && event.physical_key == PhysicalKey::Code(KeyCode::Escape))
+                    && self.window_event_key == Some(KeyCode::Escape))
         {
             self.pending_entry = None;
             self.perf.cancel_world_opening();
@@ -18270,10 +18302,9 @@ impl Game<'_> {
             {
                 typed = key_event.text.take().map(|text| text.to_string());
             }
-            let canceled = match key_event.physical_key {
-                PhysicalKey::Code(key) => self.screen_key_pressed(key, key_event.repeat),
-                PhysicalKey::Unidentified(_) => false,
-            };
+            let canceled = self
+                .window_event_key
+                .is_some_and(|key| self.screen_key_pressed(key, key_event.repeat));
             if self.screen == Screen::Options && self.screen_hooks_open() {
                 // The hook after the key's own, then the text the key path
                 // types in place (its own routing keeps it).
@@ -18309,7 +18340,7 @@ impl Game<'_> {
             event: key_event, ..
         } = &event
             && key_event.state == ElementState::Pressed
-            && let PhysicalKey::Code(key) = key_event.physical_key
+            && let Some(key) = self.window_event_key
             && self.key_focus_key(event_loop, key)
         {
             // The keyboard's focus took the key; its characters are a separate
@@ -18321,7 +18352,10 @@ impl Game<'_> {
             if let WindowEvent::MouseInput { state, button, .. } = &event
                 && !self.pad_synthetic_input()
             {
-                self.track_drag_button(*button, *state == ElementState::Pressed);
+                self.track_drag_button(
+                    horizon_client_input::winit_adapter::from_winit_mouse(*button),
+                    *state == ElementState::Pressed,
+                );
             }
             // The emote key let go over the wheel, a click on it.
             if self.screen == Screen::EmoteWheel && self.emote_wheel_event(&event) {
@@ -18329,7 +18363,7 @@ impl Game<'_> {
             }
             if let WindowEvent::KeyboardInput { event, .. } = &event
                 && event.state == ElementState::Released
-                && let PhysicalKey::Code(key) = event.physical_key
+                && let Some(key) = self.window_event_key
                 && self.screen_key_released(key)
             {
                 // Screen cancellation must not leave a held keyboard mapping down.
@@ -18348,7 +18382,12 @@ impl Game<'_> {
                 && !self.pad_synthetic_input()
                 && let Some(screen) = self.screen_view_now()
             {
-                let (button, modifiers) = (glfw_button(*button), glfw_modifiers(self.modifiers));
+                let (button, modifiers) = (
+                    glfw_button(horizon_client_input::winit_adapter::from_winit_mouse(
+                        *button,
+                    )),
+                    glfw_modifiers(self.modifiers),
+                );
                 let mut canceled = false;
                 if *state == ElementState::Pressed {
                     self.native_screen_mouse_button_pressed_pre(
@@ -18620,29 +18659,29 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.command_prompt.is_some() => {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
                         self.command_prompt_click();
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.link_prompt.is_some() => {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
                         self.link_prompt_click();
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.code_of_conduct.is_some() => {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
                         self.code_of_conduct_click()?;
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. }
                     if self.server_packs.prompt.is_some() =>
                 {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
                         self.pack_prompt_click()?;
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.dialog_open() => {
-                    if button == MouseButton::Left {
+                    if button == WinitMouseButton::Left {
                         if state == ElementState::Pressed {
                             self.dialog_click()?;
                         } else {
@@ -18652,24 +18691,26 @@ impl Game<'_> {
                 }
                 // ConnectScreen's Cancel, under the prompts and dialogs above.
                 WindowEvent::MouseInput { state, button, .. } if self.remote_loading() => {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
                         self.connect_screen_click()?;
                     }
                 }
                 WindowEvent::MouseInput { .. } if self.screen == Screen::Win => {}
                 WindowEvent::MouseInput { state, button, .. } if self.screen == Screen::Options => {
                     if self.options_waiting_for_key() && state == ElementState::Pressed {
-                        self.options_bind_mouse(button)?;
-                    } else if matches!(button, MouseButton::Left | MouseButton::Right) {
+                        self.options_bind_mouse(
+                            horizon_client_input::winit_adapter::from_winit_mouse(button),
+                        )?;
+                    } else if matches!(button, WinitMouseButton::Left | WinitMouseButton::Right) {
                         self.options_mouse(
                             state == ElementState::Pressed,
-                            button == MouseButton::Right,
+                            button == WinitMouseButton::Right,
                         )?;
                     }
                 }
                 WindowEvent::MouseInput {
                     state: ElementState::Released,
-                    button: MouseButton::Left,
+                    button: WinitMouseButton::Left,
                     ..
                 } if self.title.is_some() && self.screen != Screen::Options => {
                     if let Some(title) = &mut self.title {
@@ -18679,7 +18720,7 @@ impl Game<'_> {
                 }
                 WindowEvent::MouseInput {
                     state,
-                    button: MouseButton::Left,
+                    button: WinitMouseButton::Left,
                     ..
                 } if self.title.is_some() && state == ElementState::Pressed => {
                     let size = self
@@ -18709,7 +18750,7 @@ impl Game<'_> {
                 // click on the selected row does that).
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,
-                    button: MouseButton::Middle,
+                    button: WinitMouseButton::Middle,
                     ..
                 } if self.title.is_some() && self.screen != Screen::Options => {
                     let size = self
@@ -18724,7 +18765,7 @@ impl Game<'_> {
                 }
                 WindowEvent::MouseInput { .. } if self.title.is_some() => {}
                 WindowEvent::MouseInput { state, button, .. } if self.book.is_some() => {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
                         let size = self
                             .renderer
                             .as_ref()
@@ -18734,7 +18775,7 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.sign_edit.is_some() => {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
                         let size = self
                             .renderer
                             .as_ref()
@@ -18743,7 +18784,13 @@ impl Game<'_> {
                         self.sign_edit_click(size);
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } => {
+                WindowEvent::MouseInput {
+                    state,
+                    button: winit_button,
+                    ..
+                } => {
+                    let button =
+                        horizon_client_input::winit_adapter::from_winit_mouse(winit_button);
                     let pressed = state == ElementState::Pressed;
                     if matches!(self.screen, Screen::Inventory | Screen::Creative)
                         && let Some(key) = self
@@ -18911,7 +18958,7 @@ impl Game<'_> {
                     if self.screen == Screen::Dead && self.ui.death_confirm.is_some() =>
                 {
                     if event.state == ElementState::Pressed
-                        && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
+                        && self.window_event_key == Some(KeyCode::Escape)
                         && self
                             .ui
                             .death_confirm
@@ -18923,14 +18970,14 @@ impl Game<'_> {
                 // ConfirmScreen.keyPressed: Escape answers no.
                 WindowEvent::KeyboardInput { event, .. } if self.command_prompt.is_some() => {
                     if event.state == ElementState::Pressed
-                        && let PhysicalKey::Code(key) = event.physical_key
+                        && let Some(key) = self.window_event_key
                     {
                         self.command_prompt_key(key);
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.link_prompt.is_some() => {
                     if event.state == ElementState::Pressed
-                        && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
+                        && self.window_event_key == Some(KeyCode::Escape)
                     {
                         self.answer_link_prompt(false);
                     }
@@ -18939,7 +18986,7 @@ impl Game<'_> {
                 WindowEvent::KeyboardInput { .. } if self.code_of_conduct.is_some() => {}
                 WindowEvent::KeyboardInput { event, .. } if self.server_packs.prompt.is_some() => {
                     if event.state == ElementState::Pressed
-                        && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
+                        && self.window_event_key == Some(KeyCode::Escape)
                     {
                         self.answer_pack_prompt(false)?;
                     }
@@ -18947,7 +18994,7 @@ impl Game<'_> {
                 WindowEvent::KeyboardInput { event, .. } if self.dialog_open() => {
                     let shortcut = self.edit_shortcut(&event);
                     if event.state == ElementState::Pressed
-                        && let PhysicalKey::Code(key) = event.physical_key
+                        && let Some(key) = self.window_event_key
                     {
                         self.dialog_key(key, shortcut, event.text.as_deref())?
                     }
@@ -18955,7 +19002,7 @@ impl Game<'_> {
                 WindowEvent::KeyboardInput { event, .. }
                     if self.screen == Screen::Chat && self.title.is_none() =>
                 {
-                    if let PhysicalKey::Code(key) = event.physical_key {
+                    if let Some(key) = self.window_event_key {
                         if event.state == ElementState::Pressed {
                             self.keys.insert(key);
                             self.chat_key(&event);
@@ -18974,9 +19021,9 @@ impl Game<'_> {
                     if self.screen == Screen::Creative
                         && self.creative_screen.tab().search
                         && event.state == ElementState::Pressed
-                        && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                        && self.window_event_key != Some(KeyCode::Escape) =>
                 {
-                    if let PhysicalKey::Code(key) = event.physical_key
+                    if let Some(key) = self.window_event_key
                         && self.search_tab_hotbar_key(key)
                     {
                         // The hovered slot took the key, and its characters
@@ -18984,7 +19031,7 @@ impl Game<'_> {
                         typed = None;
                     } else if let Some(shortcut) = self.edit_shortcut(&event) {
                         self.creative_search_shortcut(shortcut);
-                    } else if let PhysicalKey::Code(key) = event.physical_key {
+                    } else if let Some(key) = self.window_event_key {
                         // EditBox.keyPressed: arrows, Home, End, Delete and Backspace.
                         let before = self.creative_screen.search.value.clone();
                         let (ctrl, shift) = (self.has_control_down(), self.has_shift_down());
@@ -19002,7 +19049,7 @@ impl Game<'_> {
                 WindowEvent::KeyboardInput { event, .. }
                     if self.recipe_search_focused()
                         && event.state == ElementState::Pressed
-                        && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                        && self.window_event_key != Some(KeyCode::Escape) =>
                 {
                     // The recipe book's search box takes every key but Escape.
                     self.recipe_key(&event);
@@ -19010,7 +19057,7 @@ impl Game<'_> {
                 WindowEvent::KeyboardInput { event, .. }
                     if self.mod_browser_typing()
                         && event.state == ElementState::Pressed
-                        && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                        && self.window_event_key != Some(KeyCode::Escape) =>
                 {
                     // A mod's item panel's search box, as the recipe book's.
                     self.mod_browser_key(&event);
@@ -19018,22 +19065,22 @@ impl Game<'_> {
                 WindowEvent::KeyboardInput { event, .. }
                     if self.station_typing()
                         && event.state == ElementState::Pressed
-                        && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                        && self.window_event_key != Some(KeyCode::Escape) =>
                 {
                     // The anvil rename box takes every key but Escape (AnvilScreen.keyPressed).
                     if let Some(shortcut) = self.edit_shortcut(&event) {
                         self.station_shortcut(shortcut);
-                    } else if let PhysicalKey::Code(key) = event.physical_key
+                    } else if let Some(key) = self.window_event_key
                         && self.station_key(key)
                     {
                     } else {
-                        let backspace = event.physical_key == PhysicalKey::Code(KeyCode::Backspace);
+                        let backspace = self.window_event_key == Some(KeyCode::Backspace);
                         self.station_text(event.text.as_deref(), backspace);
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. }
                     if self.screen == Screen::WorldOptions
-                        && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                        && self.window_event_key != Some(KeyCode::Escape) =>
                 {
                     self.world_options_key(&event)
                 }
@@ -19062,7 +19109,7 @@ impl Game<'_> {
                     {
                         return Ok(());
                     }
-                    if let PhysicalKey::Code(key) = event.physical_key {
+                    if let Some(key) = self.window_event_key {
                         self.options_key(key, event.text.as_deref())?;
                     }
                 }
@@ -19070,22 +19117,22 @@ impl Game<'_> {
                     if self.screen == Screen::Paused
                         && event.state == ElementState::Pressed
                         && self.pause_menu
-                        && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                        && self.window_event_key != Some(KeyCode::Escape) =>
                 {
-                    if let PhysicalKey::Code(key) = event.physical_key {
+                    if let Some(key) = self.window_event_key {
                         self.native_key_event(key, true, event.repeat);
                     }
-                    if let PhysicalKey::Code(key) = event.physical_key {
+                    if let Some(key) = self.window_event_key {
                         self.pause_key(key)?;
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. }
                     if self.screen == Screen::Dead && event.state == ElementState::Pressed =>
                 {
-                    if let PhysicalKey::Code(key) = event.physical_key {
+                    if let Some(key) = self.window_event_key {
                         self.native_key_event(key, true, event.repeat);
                     }
-                    if let PhysicalKey::Code(key) = event.physical_key {
+                    if let Some(key) = self.window_event_key {
                         self.death_key(key)?;
                     }
                 }
@@ -19098,7 +19145,7 @@ impl Game<'_> {
                         // `TabNavigationBar.keyPressed` comes before the open
                         // tab's own widgets: Ctrl plus a digit or Tab picks a
                         // tab instead of reaching them.
-                        if let PhysicalKey::Code(key) = event.physical_key {
+                        if let Some(key) = self.window_event_key {
                             let ctrl = self.has_control_down_with_quirk();
                             let shift = self.has_shift_down();
                             let tab = self
@@ -19113,9 +19160,9 @@ impl Game<'_> {
                             }
                         }
                         let (w, h) = self.gui_size();
-                        match event.physical_key {
+                        match self.window_event_key {
                             // `WorldListEntry.keyPressed`: Space joins too, with the button click sound.
-                            PhysicalKey::Code(
+                            Some(
                                 code @ (KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space),
                             ) if code != KeyCode::Space
                                 || self.title.as_mut().is_some_and(|t| {
@@ -19133,7 +19180,7 @@ impl Game<'_> {
                                 }
                                 self.title_action(event_loop, action)?;
                             }
-                            PhysicalKey::Code(
+                            Some(
                                 key @ (KeyCode::Backspace
                                 | KeyCode::Delete
                                 | KeyCode::ArrowLeft
@@ -19147,7 +19194,7 @@ impl Game<'_> {
                                     t.field_key(key, ctrl, shift);
                                 }
                             }
-                            PhysicalKey::Code(
+                            Some(
                                 key @ (KeyCode::ArrowLeft
                                 | KeyCode::ArrowRight
                                 | KeyCode::ArrowUp
@@ -19158,21 +19205,21 @@ impl Game<'_> {
                                     t.arrow_key(key, (w, h), shift);
                                 }
                             }
-                            PhysicalKey::Code(KeyCode::Backspace) => self.title_edit(None, true),
-                            PhysicalKey::Code(KeyCode::Tab) => {
+                            Some(KeyCode::Backspace) => self.title_edit(None, true),
+                            Some(KeyCode::Tab) => {
                                 let shift = self.has_shift_down();
                                 if let Some(t) = self.title.as_mut() {
                                     t.tab_dir(shift, (w, h));
                                 }
                             }
-                            PhysicalKey::Code(KeyCode::Escape) => {
+                            Some(KeyCode::Escape) => {
                                 if let Some(t) = self.title.as_mut() {
                                     t.escape();
                                     self.reopen_data_packs(event_loop)?;
                                 }
                                 self.save_title_options();
                             }
-                            PhysicalKey::Code(KeyCode::F5) => {
+                            Some(KeyCode::F5) => {
                                 if let Some(t) = self.title.as_mut() {
                                     t.refresh_servers();
                                 }
@@ -19182,7 +19229,7 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. } => {
-                    let PhysicalKey::Code(key) = event.physical_key else {
+                    let Some(key) = self.window_event_key else {
                         return Ok(());
                     };
                     self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
@@ -19716,6 +19763,7 @@ impl<'a> Game<'a> {
             },
             keys: Default::default(),
             physical_keys: HashSet::new(),
+            window_event_key: None,
             physical_buttons: HashSet::new(),
             drag_button: None,
             right_click_emulation: Default::default(),
@@ -19735,7 +19783,7 @@ impl<'a> Game<'a> {
             ime_allowed: false,
             ime_area: None,
             focus_lost: None,
-            modifiers: winit::keyboard::ModifiersState::empty(),
+            modifiers: Modifiers::empty(),
             fullscreen: horizon_client::window::FullscreenState::new(false),
             video_modes: Default::default(),
             mouse: MouseLook::default(),
@@ -22066,7 +22114,17 @@ impl Loading {
             return;
         }
         follow_keymap(&mut event);
-        if let Err(error) = self.menu_event(&WinitEventLoop::new(event_loop), event) {
+        let key = match &event {
+            WindowEvent::KeyboardInput { event, .. } => match event.physical_key {
+                PhysicalKey::Code(code) => Some(
+                    horizon_client_input::winit_adapter::from_winit_key(code)
+                        .unwrap_or(KeyCode::Other),
+                ),
+                PhysicalKey::Unidentified(_) => None,
+            },
+            _ => None,
+        };
+        if let Err(error) = self.menu_event(&WinitEventLoop::new(event_loop), event, key) {
             self.error = Some(error);
             event_loop.exit();
         }
@@ -23080,28 +23138,24 @@ mod tests {
     /// `GLFW_MOD_SUPER` 8), each on its own and all together.
     #[test]
     fn glfw_modifier_bits_are_glfw_modifier_bits() {
-        use winit::keyboard::ModifiersState;
         for (state, bits) in [
-            (ModifiersState::empty(), 0),
-            (ModifiersState::SHIFT, 1),
-            (ModifiersState::CONTROL, 2),
-            (ModifiersState::ALT, 4),
-            (ModifiersState::SUPER, 8),
-            (ModifiersState::SHIFT | ModifiersState::ALT, 5),
-            (ModifiersState::CONTROL | ModifiersState::SUPER, 10),
-            (ModifiersState::SHIFT | ModifiersState::CONTROL, 3),
+            (Modifiers::empty(), 0),
+            (Modifiers::SHIFT, 1),
+            (Modifiers::CONTROL, 2),
+            (Modifiers::ALT, 4),
+            (Modifiers::SUPER, 8),
+            (Modifiers::SHIFT | Modifiers::ALT, 5),
+            (Modifiers::CONTROL | Modifiers::SUPER, 10),
+            (Modifiers::SHIFT | Modifiers::CONTROL, 3),
             (
-                ModifiersState::SHIFT
-                    | ModifiersState::CONTROL
-                    | ModifiersState::ALT
-                    | ModifiersState::SUPER,
+                Modifiers::SHIFT | Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER,
                 15,
             ),
         ] {
             assert_eq!(glfw_modifiers(state), bits, "{state:?}");
         }
         // Every modifier GLFW has a bit for, and no other.
-        assert_eq!(glfw_modifiers(ModifiersState::all()), 15);
+        assert_eq!(glfw_modifiers(Modifiers::all()), 15);
     }
 
     /// The `button` a native mod's mouse hooks hand over is GLFW's index (0
@@ -23587,7 +23641,7 @@ mod tests {
             assert_eq!(toggles.is_down(SPRINT), sprint);
 
             for held in 0..4 {
-                let mut modifiers = winit::keyboard::ModifiersState::empty();
+                let mut modifiers = Modifiers::empty();
                 let mut physical_keys = HashSet::from([KeyCode::ShiftLeft, KeyCode::KeyQ]);
                 let sides = [KeyCode::ControlLeft, KeyCode::ControlRight];
                 for (bit, key) in sides.into_iter().enumerate() {
@@ -23617,11 +23671,9 @@ mod tests {
 
     #[test]
     fn quit_shortcut_blocks_window_close_when_option_disabled() {
-        use winit::keyboard::ModifiersState;
-
         let mut keys = HashSet::new();
-        let alt = ModifiersState::ALT;
-        let super_key = ModifiersState::SUPER;
+        let alt = Modifiers::ALT;
+        let super_key = Modifiers::SUPER;
 
         let quit_shortcuts_enabled = true;
         let quit_shortcuts_disabled = false;
@@ -23638,7 +23690,7 @@ mod tests {
         };
 
         let should_ignore =
-            |quit_shortcuts: bool, modifiers: ModifiersState, keys: &HashSet<KeyCode>| {
+            |quit_shortcuts: bool, modifiers: Modifiers, keys: &HashSet<KeyCode>| {
                 !quit_shortcuts && horizon_client::input::is_quit_shortcut_down(modifiers, keys)
             };
 
@@ -23651,7 +23703,7 @@ mod tests {
         // When disabled but shortcut NOT held (e.g. 'X' button clicked), close request proceeds.
         assert!(!should_ignore(
             quit_shortcuts_disabled,
-            ModifiersState::empty(),
+            Modifiers::empty(),
             &HashSet::new()
         ));
     }

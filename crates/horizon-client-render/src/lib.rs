@@ -1,13 +1,14 @@
 //! The client's world data, rendering and screens: chunks, meshing, light, streaming, the renderer,
 //! the HUD, menus and settings. Gameplay (horizon-client) builds on it; nothing here reaches gameplay.
 #![forbid(unsafe_code)]
-pub mod assets;
-pub mod atlas_sources;
+pub use horizon_terrain_mesh::{
+    assets, atlas_sources, biome, cit_assets, connected, fusion, mipmap, model_library, models,
+    native_emissive, par, spans, sprites,
+};
 pub mod audio;
 pub mod auth;
 pub mod ban_notice;
 pub mod bidi;
-pub mod biome;
 pub mod block_edit;
 pub mod block_entities;
 pub mod block_entity_anim;
@@ -25,12 +26,10 @@ pub mod chunk;
 pub mod chunk_map;
 pub mod cit;
 pub mod cit_armor;
-pub mod cit_assets;
 pub mod cit_glint;
 pub mod clouds;
 pub mod collisions;
 pub mod command_block;
-pub mod connected;
 pub mod containers;
 pub mod controller_ui;
 pub mod crash;
@@ -42,7 +41,6 @@ pub mod extras;
 pub mod fast_hash;
 pub mod fog;
 pub mod font;
-pub mod fusion;
 pub mod gfx;
 pub mod graphics;
 pub mod graphics_style;
@@ -62,13 +60,9 @@ pub mod logging;
 pub mod menu_blur;
 pub mod mesher;
 pub mod minimap;
-pub mod mipmap;
 pub mod mod_browser;
 pub mod mod_list;
-pub mod model_library;
-pub mod models;
 pub mod multiline_edit;
-pub mod native_emissive;
 pub mod options_file;
 pub mod options_fixes;
 pub mod options_ui;
@@ -78,7 +72,6 @@ pub mod pack_screen;
 pub mod packs;
 pub mod pad_cursor;
 pub mod pad_glyph;
-pub mod par;
 pub mod particles;
 pub mod poi_sections;
 pub mod post_chain;
@@ -103,13 +96,10 @@ pub mod skins;
 pub mod sound_engine;
 pub mod sound_events;
 pub mod sound_preview;
-pub mod spans;
 pub mod split_layout;
 pub mod split_map;
 pub mod split_profiles;
 pub mod split_ui;
-mod sprite_cache;
-pub mod sprites;
 pub mod streaming;
 pub mod structure_block;
 pub mod studio_ui;

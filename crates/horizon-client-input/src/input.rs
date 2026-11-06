@@ -2,8 +2,8 @@
 //! Item-use and sneak multipliers come from the player's current state; this
 //! module does not implement sprint eligibility, poses or the input lifecycle.
 
+use horizon_client_platform::{KeyCode, Modifiers};
 use std::collections::HashSet;
-use winit::keyboard::{KeyCode, ModifiersState};
 
 fn length(v: [f32; 2]) -> f32 {
     f64::from(v[0] * v[0] + v[1] * v[1]).sqrt() as f32
@@ -73,7 +73,7 @@ fn square_movement(v: [f32; 2]) -> [f32; 2] {
 /// keyboard shortcut is held.
 /// - On macOS: Command (`super_key()`) + `Q`.
 /// - On Windows / Linux / other: Alt (`alt_key()`) + `F4`.
-pub fn is_quit_shortcut_down(modifiers: ModifiersState, keys: &HashSet<KeyCode>) -> bool {
+pub fn is_quit_shortcut_down(modifiers: Modifiers, keys: &HashSet<KeyCode>) -> bool {
     if cfg!(target_os = "macos") {
         modifiers.super_key() && keys.contains(&KeyCode::KeyQ)
     } else {
@@ -88,10 +88,10 @@ mod tests {
     #[test]
     fn quit_shortcut_follows_platform_modifiers_and_keys() {
         let mut keys = HashSet::new();
-        let alt = ModifiersState::ALT;
-        let super_key = ModifiersState::SUPER;
+        let alt = Modifiers::ALT;
+        let super_key = Modifiers::SUPER;
 
-        assert!(!is_quit_shortcut_down(ModifiersState::empty(), &keys));
+        assert!(!is_quit_shortcut_down(Modifiers::empty(), &keys));
 
         keys.insert(KeyCode::F4);
         if cfg!(target_os = "macos") {

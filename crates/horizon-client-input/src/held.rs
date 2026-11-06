@@ -4,8 +4,8 @@
 //! can't release what another still presses.
 
 use crate::actions::Action;
+use horizon_client_platform::KeyCode;
 use std::collections::HashMap;
-use winit::keyboard::KeyCode;
 
 /// Where a press came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

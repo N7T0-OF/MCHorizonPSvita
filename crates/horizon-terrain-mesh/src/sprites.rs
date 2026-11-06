@@ -19,11 +19,13 @@ pub struct FrameBlend {
     pub millis: u32,
 }
 impl SpriteAnimation {
-    pub(crate) fn has_materials(&self) -> bool {
+    #[doc(hidden)]
+    pub fn has_materials(&self) -> bool {
         self.materials.iter().any(Option::is_some)
     }
     /// Material categories follow the selected colour frame, without colour interpolation.
-    pub(crate) fn material_pixels(&self, kind: usize, tick: u64) -> Option<&[u8]> {
+    #[doc(hidden)]
+    pub fn material_pixels(&self, kind: usize, tick: u64) -> Option<&[u8]> {
         let frames = self.materials[kind].as_ref()?;
         Some(&frames[self.frame(tick) % frames.len()])
     }
@@ -177,7 +179,8 @@ fn shrink_map(frame: Vec<u8>, side: u32, max: u32) -> (u32, Vec<u8>) {
     (max, resample(&frame, side, max))
 }
 /// Nearest-resample a square RGBA frame to another square size.
-pub(crate) fn resample(frame: &[u8], from: u32, to: u32) -> Vec<u8> {
+#[doc(hidden)]
+pub fn resample(frame: &[u8], from: u32, to: u32) -> Vec<u8> {
     if from == to {
         return frame.to_vec();
     }
@@ -817,12 +820,14 @@ fn texture_section(
         .and_then(|v| serde_json::from_str(v.get()).ok())
 }
 
-#[cfg(test)]
-pub(crate) fn test_animation(size: u32, layer: u32) -> SpriteAnimation {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn test_animation(size: u32, layer: u32) -> SpriteAnimation {
     test_clip(size, layer, r#"{"frametime":1,"frames":[0,1]}"#)
 }
-#[cfg(test)]
-pub(crate) fn test_clip(size: u32, layer: u32, metadata: &str) -> SpriteAnimation {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn test_clip(size: u32, layer: u32, metadata: &str) -> SpriteAnimation {
     let frame = |blue: u8| {
         (0..size * size)
             .flat_map(|i| [(i % size) as u8, (i / size) as u8, blue, 255])
@@ -830,8 +835,9 @@ pub(crate) fn test_clip(size: u32, layer: u32, metadata: &str) -> SpriteAnimatio
     };
     test_frames(layer, vec![frame(0), frame(99)], metadata)
 }
-#[cfg(test)]
-pub(crate) fn test_frames(layer: u32, frames: Vec<Vec<u8>>, metadata: &str) -> SpriteAnimation {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn test_frames(layer: u32, frames: Vec<Vec<u8>>, metadata: &str) -> SpriteAnimation {
     let metadata = AnimationMetadata::from_json(metadata).unwrap();
     SpriteAnimation {
         layer,
@@ -843,7 +849,8 @@ pub(crate) fn test_frames(layer: u32, frames: Vec<Vec<u8>>, metadata: &str) -> S
 
 /// How many reduced copies a sprite atlas keeps: the Mipmap Levels option plus the
 /// resampling-only levels an upscaled pack needs, within what the atlas holds.
-pub(crate) fn sprite_mipmap_limit(requested: u32, size: u32, minimum: u32, available: u32) -> u32 {
+#[doc(hidden)]
+pub fn sprite_mipmap_limit(requested: u32, size: u32, minimum: u32, available: u32) -> u32 {
     // Only the atlas native minimum determines how many resampling-only mips to skip.
     let upscale = (size / minimum.max(1)).max(1).ilog2();
     requested.saturating_add(upscale).min(available - 1)

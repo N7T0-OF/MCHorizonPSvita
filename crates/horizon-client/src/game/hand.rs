@@ -10,6 +10,7 @@ use horizon_client::{
     first_person::{Hand, HandWorld, Hit, SwingAnimation, UseResult, swing_duration},
     items::ItemStack,
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::geometry::{Aabb, Vec3};
 
 /// The off hand's place in `visible_hands` (the main hand uses its hotbar slot).
@@ -440,14 +441,9 @@ impl Game<'_> {
     pub(super) fn hands_busy(&self) -> bool {
         self.riding
             .is_some_and(|id| self.boats.iter().any(|b| b.id == id))
-            && [
-                winit::keyboard::KeyCode::KeyW,
-                winit::keyboard::KeyCode::KeyS,
-                winit::keyboard::KeyCode::KeyA,
-                winit::keyboard::KeyCode::KeyD,
-            ]
-            .iter()
-            .any(|k| self.movement_key_held(*k))
+            && [KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]
+                .iter()
+                .any(|k| self.movement_key_held(*k))
     }
     /// `MultiPlayerGameMode.startUseItem`'s bookkeeping around the game's
     /// use: nothing starts while a block is being broken or the hands are

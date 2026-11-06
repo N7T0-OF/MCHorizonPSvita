@@ -8,8 +8,10 @@ use horizon_client::{
     options_ui::{Event, Page},
     window::{FrameContext, InactivityFpsLimit, framerate_limit},
 };
+use horizon_client_platform::KeyCode;
+use horizon_client_platform::MouseButton;
 use serde_json::{Value, json};
-use winit::{event::MouseButton, keyboard::KeyCode, window::Fullscreen};
+use winit::window::Fullscreen;
 
 /// `CommonLinks.ACCESSIBILITY_HELP`, the Accessibility page's footer link.
 pub(super) const ACCESSIBILITY_HELP_LINK: &str = "https://aka.ms/MinecraftJavaAccessibility";

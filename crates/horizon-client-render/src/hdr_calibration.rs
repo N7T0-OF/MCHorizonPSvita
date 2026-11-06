@@ -23,7 +23,7 @@ use crate::{
     text::Text,
     ui,
 };
-use winit::keyboard::KeyCode;
+use horizon_client_platform::KeyCode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {

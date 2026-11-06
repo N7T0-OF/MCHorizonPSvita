@@ -18,9 +18,9 @@ use horizon_client::{
     ui,
     widgets::{self, ScreenInfo},
 };
+use horizon_client_platform::KeyCode;
 use horizon_world::nbt::Tag;
 use std::time::Instant;
-use winit::keyboard::KeyCode;
 
 /// An open `DialogScreen`.
 struct Open {

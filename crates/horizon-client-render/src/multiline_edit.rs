@@ -9,8 +9,8 @@ use crate::{
     text::Style,
     ui::{self, Scroll, java_whitespace},
 };
+use horizon_client_platform::KeyCode;
 use std::time::Instant;
-use winit::keyboard::KeyCode;
 
 /// `AbstractTextAreaWidget.INNER_PADDING`.
 const PADDING: f32 = 4.0;

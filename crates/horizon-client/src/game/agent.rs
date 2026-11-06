@@ -20,6 +20,8 @@ use horizon_client::{
     },
     widgets,
 };
+use horizon_client_platform::KeyCode;
+use horizon_client_platform::MouseButton;
 use horizon_core::geometry::Vec3;
 use horizon_world::registry::BlockStateId;
 use navigation::{Cell, Node, Plan, Progress};
@@ -31,8 +33,7 @@ use std::{
 };
 use winit::{
     dpi::PhysicalPosition,
-    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    keyboard::KeyCode,
+    event::{DeviceId, ElementState, MouseScrollDelta, TouchPhase, WindowEvent},
 };
 
 pub(super) const HELP: &[&str] = &[
@@ -956,7 +957,7 @@ impl Game<'_> {
                     WindowEvent::MouseInput {
                         device_id,
                         state: ElementState::Pressed,
-                        button,
+                        button: horizon_client_input::winit_adapter::to_winit_mouse(button),
                     },
                     super::input_trace::InputOrigin::Agent,
                 );
@@ -968,7 +969,7 @@ impl Game<'_> {
             WindowEvent::MouseInput {
                 device_id,
                 state: ElementState::Released,
-                button,
+                button: horizon_client_input::winit_adapter::to_winit_mouse(button),
             },
             super::input_trace::InputOrigin::Agent,
         );
@@ -1579,7 +1580,7 @@ impl Game<'_> {
                     .unwrap_or("");
                 let page = &mut self.ui.options.split_profiles;
                 if text == "\\b" {
-                    page.key(winit::keyboard::KeyCode::Backspace, None);
+                    page.key(KeyCode::Backspace, None);
                 } else {
                     page.type_text(text);
                 }

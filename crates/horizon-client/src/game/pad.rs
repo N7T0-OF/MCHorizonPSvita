@@ -14,10 +14,10 @@ use horizon_client::{
     gamepad::{self, Button, Edges, GlyphStyle, HealthWatch, PadState, Route, Rumble},
     keymapping::SNEAK,
 };
+use horizon_client_platform::KeyCode;
+use horizon_client_platform::MouseButton;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
-use winit::event::MouseButton;
-use winit::keyboard::KeyCode;
 
 pub(super) const HELP: &[&str] = &[
     "pad BUTTON down|up|tap         a virtual controller button (south east west north lb rb lt rt select start ls rs up down left right)",

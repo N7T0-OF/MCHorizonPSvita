@@ -3,13 +3,14 @@ use super::event_loop::EventLoopCtl;
 use super::{Game, Screen};
 use horizon_client::held::Source;
 use horizon_client::{Result, items::ItemStack};
+use horizon_client_platform::KeyCode;
+use horizon_client_platform::MouseButton;
 use horizon_core::geometry::Vec3;
 use serde_json::{Value, json};
 use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
-use winit::{event::MouseButton, keyboard::KeyCode};
 
 /// The control protocol's version (`docs/api/stability.md`): before 1.0 an
 /// addition makes the next patch and a breaking change the next line.
@@ -710,7 +711,7 @@ impl Game<'_> {
             "release" => {
                 self.keys.clear();
                 self.physical_keys.clear();
-                self.modifiers = winit::keyboard::ModifiersState::empty();
+                self.modifiers = horizon_client_platform::Modifiers::empty();
                 // Sneak and sprint pressed through `key` live in the toggle
                 // mappings: release them as their key's release would (a
                 // toggled one stays on), or the next sync puts them back. A

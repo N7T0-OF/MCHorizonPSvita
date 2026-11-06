@@ -10,8 +10,8 @@ use horizon_client::{
     pvp_hud::{self, Combo, Durability, Icon, Key, Line, Widget},
     text::Text,
 };
+use horizon_client_platform::MouseButton;
 use std::sync::Arc;
-use winit::event::MouseButton;
 
 #[derive(Default)]
 pub(super) struct PvpState {

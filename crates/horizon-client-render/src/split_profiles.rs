@@ -500,8 +500,8 @@ impl SplitProfiles {
 
     /// A key: true when the page took it. On New Profile Escape goes back to the list and Enter
     /// creates; on the list Escape is the options screen's (it closes the page) and counts as Cancel.
-    pub fn key(&mut self, key: winit::keyboard::KeyCode, text: Option<&str>) -> bool {
-        use winit::keyboard::KeyCode as K;
+    pub fn key(&mut self, key: horizon_client_platform::KeyCode, text: Option<&str>) -> bool {
+        use horizon_client_platform::KeyCode as K;
         if self.forgetting.is_some() {
             if key == K::Escape {
                 self.forgetting = None;
@@ -716,15 +716,15 @@ mod tests {
         let create = |p: &SplitProfiles| p.buttons(427.0, 240.0)[0].2;
         p.type_text("bea");
         assert!(!create(&p), "on the list already, whatever the case");
-        p.key(winit::keyboard::KeyCode::Backspace, None);
+        p.key(horizon_client_platform::KeyCode::Backspace, None);
         p.type_text("x");
         assert!(create(&p));
-        p.key(winit::keyboard::KeyCode::Enter, None);
+        p.key(horizon_client_platform::KeyCode::Enter, None);
         assert_eq!(p.take_choice(), Some(Some("bex".into())));
         // Escape on New Profile goes back to the list, not out of the page.
         press(&mut p, &atlas, "New Profile...");
-        assert!(p.key(winit::keyboard::KeyCode::Escape, None));
-        assert!(!p.key(winit::keyboard::KeyCode::Escape, None));
+        assert!(p.key(horizon_client_platform::KeyCode::Escape, None));
+        assert!(!p.key(horizon_client_platform::KeyCode::Escape, None));
         assert_eq!(
             p.take_choice(),
             Some(None),

@@ -30,10 +30,8 @@ pub(super) fn chat_tree(
         None => horizon_client::command::vanilla::game_dispatcher(),
     }
 }
-use winit::{
-    event::KeyEvent,
-    keyboard::{KeyCode, PhysicalKey},
-};
+use horizon_client_platform::KeyCode;
+use winit::event::KeyEvent;
 
 /// `base` with the commands native mods own (`native_commands`) added: each a
 /// literal that takes the rest of the line as it was typed, run by
@@ -926,7 +924,7 @@ impl Game<'_> {
             }
             return;
         }
-        let PhysicalKey::Code(key) = event.physical_key else {
+        let Some(key) = self.window_event_key else {
             return;
         };
         self.chat_key_code(key, event.text.as_deref());

@@ -442,7 +442,6 @@ impl Game<'_> {
     }
     /// A key press while the search box has focus.
     pub(super) fn mod_browser_key(&mut self, event: &winit::event::KeyEvent) {
-        use winit::keyboard::PhysicalKey;
         let shortcut = self.edit_shortcut(event);
         let ctrl = self.has_control_down();
         let shift = self.has_shift_down();
@@ -453,10 +452,9 @@ impl Game<'_> {
         if let Some(shortcut) = shortcut {
             search.shortcut(shortcut, &mut self.clipboard);
         } else {
-            let handled = match event.physical_key {
-                PhysicalKey::Code(code) => search.key(code, ctrl, shift),
-                _ => false,
-            };
+            let handled = self
+                .window_event_key
+                .is_some_and(|code| search.key(code, ctrl, shift));
             if !handled
                 && types_text
                 && let Some(text) = &event.text

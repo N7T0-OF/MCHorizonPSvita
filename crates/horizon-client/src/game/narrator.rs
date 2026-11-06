@@ -11,9 +11,9 @@ use horizon_client::{
     text::Text,
     toasts::SystemToast,
 };
+use horizon_client_platform::KeyCode;
 use horizon_narrator::{Status, screen::Trigger};
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `Minecraft`'s constructor: `new GameNarrator`, then
 /// `narrator.checkStatus(options.narrator().get() != OFF)`.
@@ -117,10 +117,11 @@ pub(super) fn narrate_input(
     narration: &mut ScreenNarrator,
     event: &WindowEvent,
     cursor: (f32, f32),
+    key: Option<KeyCode>,
 ) {
     match event {
         WindowEvent::KeyboardInput { event, .. } => {
-            if let PhysicalKey::Code(key) = event.physical_key {
+            if let Some(key) = key {
                 narrate_key(narration, key, event.state == ElementState::Pressed);
             } else if event.state == ElementState::Pressed {
                 narration.keyboard_action();

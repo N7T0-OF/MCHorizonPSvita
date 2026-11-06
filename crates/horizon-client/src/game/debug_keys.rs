@@ -12,10 +12,10 @@ use horizon_client::{
     hud_layout, keybinds,
     text::{ClickEvent, Style, Text},
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::geometry::{Axis, Vec3};
 use horizon_protocol::packets::play::{BlockEntityTagQuery, EntityTagQuery, Serverbound};
 use horizon_world::nbt::Tag;
-use winit::keyboard::KeyCode;
 
 /// `ChatFormatting.YELLOW` and `RED`.
 const YELLOW: u32 = 0xFF_FF55;

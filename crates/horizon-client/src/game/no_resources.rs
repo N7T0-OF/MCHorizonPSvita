@@ -150,7 +150,7 @@ impl ApplicationHandler for Missing {
             } => self.click(event_loop),
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed
-                    && event.physical_key == PhysicalKey::Code(KeyCode::Escape) =>
+                    && matches!(event.physical_key, PhysicalKey::Code(WinitKeyCode::Escape)) =>
             {
                 event_loop.exit()
             }

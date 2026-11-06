@@ -23,6 +23,7 @@ use horizon_client::{
     projectiles::ProjectileKind,
     world::World,
 };
+use horizon_client_platform::KeyCode;
 use horizon_core::{
     position::BlockPos,
     random::{LegacyRandom, RandomSource},
@@ -30,7 +31,6 @@ use horizon_core::{
 use horizon_world::{level::Ticks, registry::BlockStateId};
 use serde_json::Value;
 use std::{cell::RefCell, collections::HashMap, fmt::Write as _, io::Write as _, sync::Arc};
-use winit::keyboard::KeyCode;
 
 thread_local! {
     /// Level and game events recorded while a fixture case runs.

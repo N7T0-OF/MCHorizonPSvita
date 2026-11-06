@@ -16,3 +16,4 @@ pub mod modifiers;
 pub mod mouse;
 pub mod snap;
 pub mod window;
+pub mod winit_adapter;
