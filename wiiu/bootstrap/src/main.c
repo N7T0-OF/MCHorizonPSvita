@@ -80,6 +80,13 @@ extern void horizon_wiiu_camera_motion(float yaw_degrees,
                                        float forward,
                                        float strafe,
                                        float output[2]);
+extern void horizon_wiiu_player_vertical_step(float eyeY,
+                                              float verticalVelocity,
+                                              float groundEyeY,
+                                              uint32_t jumpPressed,
+                                              float output[2]);
+extern uint32_t horizon_wiiu_player_can_step_up(float currentGroundEyeY,
+                                                float candidateGroundEyeY);
 
 #ifdef HORIZON_WIIU_WORLDGEN
 extern int32_t horizon_wiiu_world_init(const char *resources, int64_t seed,
@@ -153,8 +160,14 @@ static float sCameraY;
 static float sCameraZ;
 static float sCameraYaw;
 static float sCameraPitch;
+#ifndef HORIZON_WIIU_CAPTURE
+static float sPlayerVerticalVelocity;
+#endif
 static float sFocalScale = 1.0f;
 static float sAspect = 1.0f;
+#ifndef HORIZON_WIIU_CAPTURE
+static BOOL sJumpButtonWasHeld;
+#endif
 static BOOL sBlockMeshDirty = TRUE;
 
 static void
@@ -644,6 +657,7 @@ static void
 update_camera(void)
 {
    const float previousCameraX = sCameraX;
+   const float previousCameraY = sCameraY;
    const float previousCameraZ = sCameraZ;
    const float previousCameraYaw = sCameraYaw;
    const float previousCameraPitch = sCameraPitch;
@@ -688,43 +702,85 @@ update_camera(void)
 
    float movement[2];
    horizon_wiiu_camera_motion(sCameraYaw, forward, strafe, movement);
-   sCameraX += movement[0];
-   sCameraZ += movement[1];
+   float candidateCameraX = sCameraX + movement[0];
+   float candidateCameraZ = sCameraZ + movement[1];
 
 #ifdef HORIZON_WIIU_CAPTURE
-   if (sCameraX < -4.0f) sCameraX = -4.0f;
-   if (sCameraX > 4.0f) sCameraX = 4.0f;
-   if (sCameraZ < -4.0f) sCameraZ = -4.0f;
-   if (sCameraZ > 4.0f) sCameraZ = 4.0f;
+   if (candidateCameraX < -4.0f) candidateCameraX = -4.0f;
+   if (candidateCameraX > 4.0f) candidateCameraX = 4.0f;
+   if (candidateCameraZ < -4.0f) candidateCameraZ = -4.0f;
+   if (candidateCameraZ > 4.0f) candidateCameraZ = 4.0f;
+   sCameraX = candidateCameraX;
+   sCameraZ = candidateCameraZ;
 #else
 #ifdef HORIZON_WIIU_WORLDGEN
    const float minX = sSectionOrigin[0] + 0.5f;
    const float maxX = sSectionOrigin[0] + HORIZON_WIIU_WORLD_REGION_DIAMETER - 0.5f;
    const float minZ = sSectionOrigin[2] + 0.5f;
    const float maxZ = sSectionOrigin[2] + HORIZON_WIIU_WORLD_REGION_DIAMETER - 0.5f;
-   if (sCameraX < minX) sCameraX = minX;
-   if (sCameraX > maxX) sCameraX = maxX;
-   if (sCameraZ < minZ) sCameraZ = minZ;
-   if (sCameraZ > maxZ) sCameraZ = maxZ;
-#ifdef HORIZON_WIIU_WORLDGEN
+   if (candidateCameraX < minX) candidateCameraX = minX;
+   if (candidateCameraX > maxX) candidateCameraX = maxX;
+   if (candidateCameraZ < minZ) candidateCameraZ = minZ;
+   if (candidateCameraZ > maxZ) candidateCameraZ = maxZ;
+   const uint32_t currentLocalX = (uint32_t)(sCameraX - sSectionOrigin[0]);
+   const uint32_t currentLocalZ = (uint32_t)(sCameraZ - sSectionOrigin[2]);
+   const uint32_t candidateLocalX = (uint32_t)(candidateCameraX - sSectionOrigin[0]);
+   const uint32_t candidateLocalZ = (uint32_t)(candidateCameraZ - sSectionOrigin[2]);
+   const float currentGroundEyeY = (float)sGroundHeights[
+      currentLocalZ * HORIZON_WIIU_WORLD_REGION_DIAMETER + currentLocalX] + 1.62f;
+   const float candidateGroundEyeY = (float)sGroundHeights[
+      candidateLocalZ * HORIZON_WIIU_WORLD_REGION_DIAMETER + candidateLocalX] + 1.62f;
+   const BOOL grounded = sCameraY <= currentGroundEyeY + 0.0001f
+                         && sPlayerVerticalVelocity <= 0.0f;
+   if (grounded
+       && !horizon_wiiu_player_can_step_up(currentGroundEyeY, candidateGroundEyeY)) {
+      candidateCameraX = sCameraX;
+      candidateCameraZ = sCameraZ;
+   }
+   sCameraX = candidateCameraX;
+   sCameraZ = candidateCameraZ;
    stream_runtime_world_region();
-#endif
    const uint32_t localX = (uint32_t)(sCameraX - sSectionOrigin[0]);
    const uint32_t localZ = (uint32_t)(sCameraZ - sSectionOrigin[2]);
-   sCameraY = (float)sGroundHeights[
+   const float groundEyeY = (float)sGroundHeights[
       localZ * HORIZON_WIIU_WORLD_REGION_DIAMETER + localX] + 1.62f;
 #else
-   if (sCameraX < -15.5f) sCameraX = -15.5f;
-   if (sCameraX > -0.5f) sCameraX = -0.5f;
-   if (sCameraZ < -15.5f) sCameraZ = -15.5f;
-   if (sCameraZ > -0.5f) sCameraZ = -0.5f;
+   if (candidateCameraX < -15.5f) candidateCameraX = -15.5f;
+   if (candidateCameraX > -0.5f) candidateCameraX = -0.5f;
+   if (candidateCameraZ < -15.5f) candidateCameraZ = -15.5f;
+   if (candidateCameraZ > -0.5f) candidateCameraZ = -0.5f;
+   const int32_t currentLocalX = (int32_t)(sCameraX + 16.0f);
+   const int32_t currentLocalZ = (int32_t)(sCameraZ + 16.0f);
+   const int32_t candidateLocalX = (int32_t)(candidateCameraX + 16.0f);
+   const int32_t candidateLocalZ = (int32_t)(candidateCameraZ + 16.0f);
+   const float currentGroundEyeY = (float)sGroundHeights[currentLocalZ * 16 + currentLocalX] + 1.62f;
+   const float candidateGroundEyeY = (float)sGroundHeights[
+      candidateLocalZ * 16 + candidateLocalX] + 1.62f;
+   const BOOL grounded = sCameraY <= currentGroundEyeY + 0.0001f
+                         && sPlayerVerticalVelocity <= 0.0f;
+   if (grounded
+       && !horizon_wiiu_player_can_step_up(currentGroundEyeY, candidateGroundEyeY)) {
+      candidateCameraX = sCameraX;
+      candidateCameraZ = sCameraZ;
+   }
+   sCameraX = candidateCameraX;
+   sCameraZ = candidateCameraZ;
    const int32_t localX = (int32_t)(sCameraX + 16.0f);
    const int32_t localZ = (int32_t)(sCameraZ + 16.0f);
-   sCameraY = (float)sGroundHeights[localZ * 16 + localX] + 1.62f;
+   const float groundEyeY = (float)sGroundHeights[localZ * 16 + localX] + 1.62f;
 #endif
+   const BOOL jumpHeld = (status.hold & VPAD_BUTTON_A) != 0;
+   const BOOL jumpPressed = jumpHeld && !sJumpButtonWasHeld;
+   sJumpButtonWasHeld = jumpHeld;
+   float verticalState[2] = {sCameraY, sPlayerVerticalVelocity};
+   horizon_wiiu_player_vertical_step(sCameraY, sPlayerVerticalVelocity,
+                                     groundEyeY, jumpPressed, verticalState);
+   sCameraY = verticalState[0];
+   sPlayerVerticalVelocity = verticalState[1];
 #endif
    if (sCameraX != previousCameraX || sCameraZ != previousCameraZ
-       || sCameraYaw != previousCameraYaw || sCameraPitch != previousCameraPitch) {
+       || sCameraY != previousCameraY || sCameraYaw != previousCameraYaw
+       || sCameraPitch != previousCameraPitch) {
       sBlockMeshDirty = TRUE;
    }
 }

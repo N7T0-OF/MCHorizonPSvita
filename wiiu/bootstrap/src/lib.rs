@@ -24,6 +24,8 @@ const WORLD_TRIANGLE_CAPACITY: u32 = WORLD_VERTEX_CAPACITY / 4 * 6;
 const TRIANGLE_VERTICES: [usize; 6] = [0, 1, 2, 0, 2, 3];
 const GX2_VERTEX_SCALARS: usize = 12;
 const DEGREES_TO_RADIANS: f32 = core::f32::consts::PI / 180.0;
+const PLAYER_JUMP_SPEED: f32 = 0.17;
+const PLAYER_GRAVITY: f32 = 0.012;
 
 #[derive(Clone, Copy)]
 struct Camera {
@@ -228,6 +230,72 @@ pub extern "C" fn horizon_wiiu_camera_motion(
     }
 }
 
+fn player_vertical_step(
+    eye_y: f32,
+    vertical_velocity: f32,
+    ground_eye_y: f32,
+    jump_pressed: bool,
+) -> (f32, f32) {
+    if !eye_y.is_finite() || !vertical_velocity.is_finite() || !ground_eye_y.is_finite() {
+        return (eye_y, vertical_velocity);
+    }
+
+    let grounded = eye_y <= ground_eye_y + 0.0001 && vertical_velocity <= 0.0;
+    if grounded {
+        if jump_pressed {
+            let vertical_velocity = PLAYER_JUMP_SPEED;
+            return (
+                eye_y + vertical_velocity,
+                vertical_velocity - PLAYER_GRAVITY,
+            );
+        }
+        return (ground_eye_y, 0.0);
+    }
+
+    let next_eye_y = eye_y + vertical_velocity;
+    if next_eye_y <= ground_eye_y {
+        return (ground_eye_y, 0.0);
+    }
+    (next_eye_y, vertical_velocity - PLAYER_GRAVITY)
+}
+
+fn player_can_step_up(current_ground_eye_y: f32, candidate_ground_eye_y: f32) -> bool {
+    current_ground_eye_y.is_finite()
+        && candidate_ground_eye_y.is_finite()
+        && candidate_ground_eye_y <= current_ground_eye_y + 1.0
+}
+
+/// Returns whether the player can move onto a candidate surface while grounded.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_player_can_step_up(
+    current_ground_eye_y: f32,
+    candidate_ground_eye_y: f32,
+) -> u32 {
+    player_can_step_up(current_ground_eye_y, candidate_ground_eye_y) as u32
+}
+
+/// Advances the grounded/jumping player eye height against a sampled terrain surface.
+/// `output` receives `[eye_y, vertical_velocity]`.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_player_vertical_step(
+    eye_y: f32,
+    vertical_velocity: f32,
+    ground_eye_y: f32,
+    jump_pressed: u32,
+    output: *mut f32,
+) {
+    if output.is_null() {
+        return;
+    }
+    let (eye_y, vertical_velocity) =
+        player_vertical_step(eye_y, vertical_velocity, ground_eye_y, jump_pressed != 0);
+    // SAFETY: the C caller provides space for two consecutive float outputs.
+    unsafe {
+        output.write(eye_y);
+        output.add(1).write(vertical_velocity);
+    }
+}
+
 /// Supplies the CafeOS frame clear color to the WUT presentation loop.
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_frame_color(frame: u32, rgba: *mut f32) {
@@ -260,8 +328,9 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 mod tests {
     use super::{
         horizon_wiiu_build_runtime_chunk, horizon_wiiu_camera_motion,
-        horizon_wiiu_encode_terrain_quads, project_position, terrain_light_uv, Camera,
-        GX2_VERTEX_SCALARS, WORLD_TRIANGLE_CAPACITY, WORLD_VERTEX_CAPACITY,
+        horizon_wiiu_encode_terrain_quads, player_can_step_up, player_vertical_step,
+        project_position, terrain_light_uv, Camera, GX2_VERTEX_SCALARS, PLAYER_JUMP_SPEED,
+        WORLD_TRIANGLE_CAPACITY, WORLD_VERTEX_CAPACITY,
     };
     use horizon_terrain_data::TerrainVertex;
     use std::vec;
@@ -365,6 +434,43 @@ mod tests {
         horizon_wiiu_camera_motion(90.0, 0.0, 1.0, motion.as_mut_ptr());
         assert!(motion[0].abs() < 0.00001);
         assert!((motion[1] + 1.0).abs() < 0.00001);
+    }
+
+    #[test]
+    fn player_jump_rises_and_lands_on_the_sampled_surface() {
+        let ground_eye_y = 63.0 + 1.62;
+        let (mut eye_y, mut velocity) = player_vertical_step(ground_eye_y, 0.0, ground_eye_y, true);
+        assert!(eye_y > ground_eye_y);
+        assert!(velocity > 0.0);
+
+        let mut apex = eye_y;
+        for _ in 0..60 {
+            (eye_y, velocity) = player_vertical_step(eye_y, velocity, ground_eye_y, false);
+            apex = apex.max(eye_y);
+        }
+
+        assert!((apex - ground_eye_y - 1.29).abs() < 0.03);
+        assert_eq!(eye_y, ground_eye_y);
+        assert_eq!(velocity, 0.0);
+    }
+
+    #[test]
+    fn held_jump_does_not_retrigger_while_airborne() {
+        let ground_eye_y = 64.0 + 1.62;
+        let (mut eye_y, mut velocity) = player_vertical_step(ground_eye_y, 0.0, ground_eye_y, true);
+        for _ in 0..5 {
+            (eye_y, velocity) = player_vertical_step(eye_y, velocity, ground_eye_y, true);
+        }
+
+        assert!(eye_y > ground_eye_y);
+        assert!(velocity < PLAYER_JUMP_SPEED);
+    }
+
+    #[test]
+    fn grounded_player_can_step_up_one_block_but_not_a_cliff() {
+        assert!(player_can_step_up(64.0, 65.0));
+        assert!(!player_can_step_up(64.0, 65.01));
+        assert!(player_can_step_up(64.0, 63.0));
     }
 
     #[test]
