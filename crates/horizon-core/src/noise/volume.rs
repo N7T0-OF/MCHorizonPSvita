@@ -1,4 +1,4 @@
-use crate::geometry::Axis;
+use crate::math::Axis;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DensityError {
@@ -7,8 +7,8 @@ pub enum DensityError {
     VolumeTooLarge,
     BufferTooShort,
 }
-impl std::fmt::Display for DensityError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for DensityError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::NonpositiveDimensions => "density dimensions must be positive",
             Self::NonpositiveSteps => "density coordinate steps must be positive",
@@ -17,7 +17,7 @@ impl std::fmt::Display for DensityError {
         })
     }
 }
-impl std::error::Error for DensityError {}
+impl core::error::Error for DensityError {}
 
 /// A bounded strided density volume. The flat layout is Z, X, Y (Y innermost).
 /// Block coordinate multiplication and addition retain Java's i32 wrapping.
@@ -62,7 +62,7 @@ impl DensityVolume {
         self.size
     }
     pub fn maximum(self) -> [i32; 3] {
-        std::array::from_fn(|axis| self.coordinate(axis, self.sizes[axis]).wrapping_sub(1))
+        core::array::from_fn(|axis| self.coordinate(axis, self.sizes[axis]).wrapping_sub(1))
     }
     pub fn index(self, position: [usize; 3]) -> Option<usize> {
         if (0..3).any(|i| position[i] >= self.sizes[i]) {
@@ -77,14 +77,15 @@ impl DensityVolume {
     /// Find an exact lattice sample, retaining Java's wrapped subtraction and
     /// extent multiplication. Coordinates between samples are cache misses.
     pub fn index_of_block(self, position: [i32; 3]) -> Option<usize> {
-        let relative: [i32; 3] = std::array::from_fn(|i| position[i].wrapping_sub(self.minimum[i]));
+        let relative: [i32; 3] =
+            core::array::from_fn(|i| position[i].wrapping_sub(self.minimum[i]));
         for (axis, value) in relative.iter().enumerate() {
             let extent = (self.sizes[axis] as i32).wrapping_mul(self.steps[axis]);
             if *value < 0 || *value >= extent || *value % self.steps[axis] != 0 {
                 return None;
             }
         }
-        self.index(std::array::from_fn(|i| {
+        self.index(core::array::from_fn(|i| {
             (relative[i] / self.steps[i]) as usize
         }))
     }

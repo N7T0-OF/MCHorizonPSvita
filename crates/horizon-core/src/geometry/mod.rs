@@ -9,6 +9,8 @@ mod shape;
 mod sweep;
 mod traversal;
 pub mod trig;
+pub use crate::math::Axis;
+pub(crate) use crate::math::floor_i32;
 use crate::position::BlockPos;
 pub use movement::{
     block_floor_height, candidate_step_heights, entity_collision_bounds, resolve_shape_movement,
@@ -19,14 +21,6 @@ pub use sweep::sweep_intersected_blocks;
 pub use traversal::{TraversalError, traverse_blocks};
 
 pub const COLLISION_EPSILON: f64 = 1.0e-7;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(usize)]
-pub enum Axis {
-    X,
-    Y,
-    Z,
-}
 
 impl Axis {
     pub const ALL: [Self; 3] = [Self::X, Self::Y, Self::Z];
@@ -650,19 +644,6 @@ pub(crate) fn clamp(value: f64, min: f64, max: f64) -> f64 {
         min
     } else {
         java_min(value, max)
-    }
-}
-/// `Mth.floor`, which is `(int) Math.floor(v)`: truncate, then step down for
-/// negative fractions. A truncating conversion and a compare, where
-/// `f64::floor` is a libm call on baseline x86-64. Both casts saturate (NaN is
-/// 0), so the step down saturates too: below `i32::MIN` stays `i32::MIN`.
-#[inline]
-pub(crate) fn floor_i32(value: f64) -> i32 {
-    let truncated = value as i32;
-    if value < f64::from(truncated) {
-        truncated.saturating_sub(1)
-    } else {
-        truncated
     }
 }
 fn lerp(amount: f64, start: f64, end: f64) -> f64 {

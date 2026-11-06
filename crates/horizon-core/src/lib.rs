@@ -5,6 +5,10 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(feature = "wiiu-core", no_std)]
 
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
+
 #[cfg(not(feature = "wiiu-core"))]
 pub mod biome;
 #[cfg(not(feature = "wiiu-core"))]
@@ -19,14 +23,12 @@ pub mod geometry;
 pub mod jmath;
 #[cfg(not(feature = "wiiu-core"))]
 pub mod no_ai;
-#[cfg(not(feature = "wiiu-core"))]
 pub mod noise;
 #[cfg(not(feature = "wiiu-core"))]
 pub mod paletted;
 pub mod position;
 #[cfg(not(feature = "wiiu-core"))]
 pub mod prepared_files;
-#[cfg(not(feature = "wiiu-core"))]
 pub mod random;
 #[cfg(not(feature = "wiiu-core"))]
 pub mod storage;
@@ -38,5 +40,7 @@ pub mod ticks;
 #[cfg(not(feature = "wiiu-core"))]
 pub mod release;
 pub mod version;
+
+pub mod math;
 
 pub use version::VANILLA_VERSION;

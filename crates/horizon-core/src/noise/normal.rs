@@ -1,6 +1,9 @@
 use super::{NanRange, NoiseStack, PerlinNoise};
-use crate::random::{PositionalRandom, RandomSource};
-use std::sync::Arc;
+use crate::{
+    math::sqrt_f64,
+    random::{PositionalRandom, RandomSource},
+};
+use alloc::{format, string::String, sync::Arc, vec, vec::Vec};
 
 /// An allocation bound for the builder API (the vanilla data codec allows 32).
 const MAX_BUILDER_OCTAVES: i32 = 4096;
@@ -18,8 +21,8 @@ pub enum NoiseBuildError {
     PositiveLegacyOctaves,
     LegacyWorkLimit,
 }
-impl std::fmt::Display for NoiseBuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for NoiseBuildError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::NegativeOctaveCount => "octave count cannot be negative",
             Self::TooManyOctaves => "octave count exceeds the 4096-layer allocation bound",
@@ -36,7 +39,7 @@ impl std::fmt::Display for NoiseBuildError {
         })
     }
 }
-impl std::error::Error for NoiseBuildError {}
+impl core::error::Error for NoiseBuildError {}
 impl From<NanRange> for NoiseBuildError {
     fn from(_: NanRange) -> Self {
         Self::NanRange
@@ -367,11 +370,11 @@ fn normalization_factor(sum: f64, octaves: &[OctaveInfo]) -> f64 {
         let deviation = 0.270_224_783_124_521_1 * octave.amplitude.abs();
         variance += deviation * deviation;
     }
-    let deviation = variance.sqrt();
+    let deviation = sqrt_f64(variance);
     if deviation == 0.0 {
         0.0
     } else {
-        (sum * (1.0 / 3.0)) / (deviation * 2.0_f64.sqrt())
+        (sum * (1.0 / 3.0)) / (deviation * sqrt_f64(2.0))
     }
 }
 fn parity_factor(base_amplitude: f64, count: i32, modifiers: &[f64]) -> f64 {

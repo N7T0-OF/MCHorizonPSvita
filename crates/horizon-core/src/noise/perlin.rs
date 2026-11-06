@@ -2,7 +2,8 @@ use super::{
     DensityError, DensityVolume, GradientTable, PERLIN_GRADIENTS, dot, lerp2, lerp3, smoothstep,
     smoothstep_derivative, wrap,
 };
-use crate::{geometry::floor_i32, random::RandomSource};
+use crate::{math::floor_i32, random::RandomSource};
+use alloc::vec::Vec;
 
 #[derive(Clone, Debug)]
 pub struct PerlinNoise {
@@ -31,11 +32,11 @@ impl PerlinNoise {
     }
 
     fn coordinates(&self, point: [f64; 3]) -> ([i32; 3], [f64; 3]) {
-        let shifted: [f64; 3] = std::array::from_fn(|i| wrap(point[i]) + self.table.offsets[i]);
+        let shifted: [f64; 3] = core::array::from_fn(|i| wrap(point[i]) + self.table.offsets[i]);
         let cell = shifted.map(floor_i32);
         (
             cell,
-            std::array::from_fn(|i| shifted[i] - f64::from(cell[i])),
+            core::array::from_fn(|i| shifted[i] - f64::from(cell[i])),
         )
     }
 
@@ -67,7 +68,7 @@ impl PerlinNoise {
         let rows = [
             lower, lower_x, upper, upper_x, lower, lower_x, upper, upper_x,
         ];
-        std::array::from_fn(|i| {
+        core::array::from_fn(|i| {
             (self
                 .table
                 .permute(rows[i].wrapping_add(cell_z).wrapping_add((i / 4) as i32))
@@ -76,7 +77,7 @@ impl PerlinNoise {
     }
 
     fn corner_values(gradients: [[f32; 3]; 8], point: [f32; 3]) -> [f32; 8] {
-        std::array::from_fn(|i| {
+        core::array::from_fn(|i| {
             dot(
                 gradients[i],
                 [
@@ -108,7 +109,7 @@ impl PerlinNoise {
         let values = Self::corner_values(gradients, point);
         let fade = point.map(smoothstep);
         let gradient =
-            std::array::from_fn::<_, 3, _>(|axis| lerp3(fade, gradients.map(|g| g[axis])));
+            core::array::from_fn::<_, 3, _>(|axis| lerp3(fade, gradients.map(|g| g[axis])));
         let changes = [
             lerp2(
                 fade[1],
@@ -264,7 +265,7 @@ impl PerlinNoise {
                         continue;
                     }
                     let dy = offsets[y];
-                    let values = std::array::from_fn(|i| {
+                    let values = core::array::from_fn(|i| {
                         xz_dots[i] + y_gradients[i] * (dy - ((i >> 1) & 1) as f32)
                     });
                     column[y] += amplitude * lerp3([fade_x, fades[y], fade_z], values);
@@ -289,8 +290,8 @@ struct CornerTerms([[[f32; 2]; 16]; 4]);
 
 impl CornerTerms {
     fn new(dx: f32, dz: f32) -> Self {
-        Self(std::array::from_fn(|corner| {
-            std::array::from_fn(|gradient| {
+        Self(core::array::from_fn(|corner| {
+            core::array::from_fn(|gradient| {
                 let [gx, gy, gz] = PERLIN_GRADIENTS[gradient];
                 [
                     gx * (dx - (corner & 1) as f32) + gz * (dz - (corner >> 1) as f32),
@@ -391,10 +392,10 @@ fn add_four(
     [fade_x, fade_z]: [f32; 2],
     amplitude: f32,
 ) {
-    let dy: [f32; 4] = std::array::from_fn(|lane| offsets[lane]);
-    let fy: [f32; 4] = std::array::from_fn(|lane| fades[lane]);
-    let values: [[f32; 4]; 8] = std::array::from_fn(|i| {
-        std::array::from_fn(|lane| dots[i] + gradients[i] * (dy[lane] - ((i >> 1) & 1) as f32))
+    let dy: [f32; 4] = core::array::from_fn(|lane| offsets[lane]);
+    let fy: [f32; 4] = core::array::from_fn(|lane| fades[lane]);
+    let values: [[f32; 4]; 8] = core::array::from_fn(|i| {
+        core::array::from_fn(|lane| dots[i] + gradients[i] * (dy[lane] - ((i >> 1) & 1) as f32))
     });
     for lane in 0..4 {
         out[lane] += amplitude * lerp3([fade_x, fy[lane], fade_z], values.map(|v| v[lane]));

@@ -1,9 +1,9 @@
 use super::{DensityError, DensityVolume, NanRange, PerlinNoise, SimplexNoise, SmearedPerlinNoise};
-use std::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 
 /// Immutable noise sampling. Implementations may override the default scalar
 /// volume traversal when vanilla has a distinct bulk arithmetic path.
-pub trait Noise: std::fmt::Debug + Send + Sync {
+pub trait Noise: core::fmt::Debug + Send + Sync {
     fn range(&self) -> Result<[f32; 2], NanRange>;
     fn get2(&self, x: f64, z: f64) -> f32;
     fn get3(&self, x: f64, y: f64, z: f64) -> f32;

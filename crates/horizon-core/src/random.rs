@@ -1,4 +1,6 @@
 //! Vanilla's two seeded random streams. No platform/default Rust RNG is used.
+use crate::math::{log_f64, sqrt_f64};
+use core::fmt;
 mod hash;
 mod positional;
 mod worldgen;
@@ -55,13 +57,13 @@ pub mod trace {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvalidBound;
 
-impl std::fmt::Display for InvalidBound {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for InvalidBound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("bound must be positive")
     }
 }
 
-impl std::error::Error for InvalidBound {}
+impl core::error::Error for InvalidBound {}
 
 pub trait RandomSource: Sized {
     type Positional: PositionalRandom<Source = Self>;
@@ -313,7 +315,7 @@ pub fn marsaglia_polar(cache: &mut Option<f64>, mut next_double: impl FnMut() ->
         if radius >= 1.0 || radius == 0.0 {
             continue;
         }
-        let multiplier = (-2.0 * crate::jmath::log(radius) / radius).sqrt();
+        let multiplier = sqrt_f64(-2.0 * log_f64(radius) / radius);
         *cache = Some(y * multiplier);
         return x * multiplier;
     }

@@ -3,6 +3,9 @@
 //! Coordinates use double precision; Perlin interpolation and its derivatives
 //! use single precision. Keep operation order: algebraic rearrangement changes
 //! world generation. Complete density graphs and terrain generation remain absent.
+use crate::math::floor_f64;
+use core::fmt;
+
 mod normal;
 mod perlin;
 mod simplex;
@@ -21,12 +24,12 @@ use crate::random::RandomSource;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NanRange;
-impl std::fmt::Display for NanRange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for NanRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("noise interval bounds cannot include NaN")
     }
 }
-impl std::error::Error for NanRange {}
+impl core::error::Error for NanRange {}
 
 /// The immutable offsets and permutation table shared by gradient samplers.
 #[derive(Clone, Debug)]
@@ -38,8 +41,8 @@ pub struct GradientTable {
 impl GradientTable {
     pub fn new(random: &mut impl RandomSource, offset_scale: f64) -> Self {
         // Zero scale still consumes all three draws.
-        let offsets = std::array::from_fn(|_| random.next_double() * offset_scale);
-        let mut permutations = std::array::from_fn(|i| i as u8);
+        let offsets = core::array::from_fn(|_| random.next_double() * offset_scale);
+        let mut permutations = core::array::from_fn(|i| i as u8);
         for i in 0..256 {
             let other = i + random.next_int_bound((256 - i) as i32).unwrap() as usize;
             permutations.swap(i, other);
@@ -110,7 +113,7 @@ pub fn wrap(value: f64) -> f64 {
     if value >= -half && value < half {
         value
     } else {
-        value - (value / 33_554_432.0 + 0.5).floor() * 33_554_432.0
+        value - floor_f64(value / 33_554_432.0 + 0.5) * 33_554_432.0
     }
 }
 
@@ -141,7 +144,8 @@ fn lerp3(fade: [f32; 3], values: [f32; 8]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{geometry::Axis, random::LegacyRandom};
+    use crate::{math::Axis, random::LegacyRandom};
+    use std::vec::Vec;
 
     #[test]
     fn vanilla_seed_zero_samples_and_derivatives() {

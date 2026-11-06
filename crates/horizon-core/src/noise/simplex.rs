@@ -1,5 +1,8 @@
 use super::{GRADIENTS, GradientTable};
-use crate::{geometry::floor_i32, random::RandomSource};
+use crate::{
+    math::{floor_i32, sqrt_f64},
+    random::RandomSource,
+};
 
 #[derive(Clone, Debug)]
 pub struct SimplexNoise {
@@ -41,7 +44,7 @@ impl SimplexNoise {
     pub fn get2(&self, x: f64, y: f64) -> f32 {
         let x = x + self.table.offsets[0];
         let y = y + self.table.offsets[1];
-        let root3 = 3.0_f64.sqrt();
+        let root3 = sqrt_f64(3.0);
         let skew = 0.5 * (root3 - 1.0);
         let unskew = (3.0 - root3) / 6.0;
         let shift = (x + y) * skew;
@@ -77,7 +80,7 @@ impl SimplexNoise {
         let skew = (shifted[0] + shifted[1] + shifted[2]) * (1.0 / 3.0);
         let cell = shifted.map(|v| floor_i32(v + skew));
         let unskew = f64::from(cell[0].wrapping_add(cell[1]).wrapping_add(cell[2])) * (1.0 / 6.0);
-        let point: [f64; 3] = std::array::from_fn(|i| shifted[i] - (f64::from(cell[i]) - unskew));
+        let point: [f64; 3] = core::array::from_fn(|i| shifted[i] - (f64::from(cell[i]) - unskew));
         let [x, y, z] = point;
         let (a, b) = if x >= y {
             if y >= z {
@@ -107,12 +110,12 @@ impl SimplexNoise {
         let first = Self::corner(grad([0; 3]), point, 0.6);
         let second = Self::corner(
             grad(a),
-            std::array::from_fn(|i| point[i] - f64::from(a[i]) + (1.0 / 6.0)),
+            core::array::from_fn(|i| point[i] - f64::from(a[i]) + (1.0 / 6.0)),
             0.6,
         );
         let third = Self::corner(
             grad(b),
-            std::array::from_fn(|i| point[i] - f64::from(b[i]) + (1.0 / 3.0)),
+            core::array::from_fn(|i| point[i] - f64::from(b[i]) + (1.0 / 3.0)),
             0.6,
         );
         let fourth = Self::corner(grad([1; 3]), point.map(|v| v - 1.0 + 0.5), 0.6);

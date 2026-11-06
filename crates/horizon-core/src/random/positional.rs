@@ -86,6 +86,7 @@ pub const fn position_seed(position: BlockPos) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{println, vec::Vec};
 
     #[test]
     fn legacy_positional_matches_direct_seeding() {

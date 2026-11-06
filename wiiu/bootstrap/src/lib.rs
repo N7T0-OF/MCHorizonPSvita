@@ -1,17 +1,21 @@
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 #[cfg(not(test))]
 use core::panic::PanicInfo;
-use horizon_core::position::BlockPos;
+use horizon_core::position::ChunkPos;
 use horizon_terrain_data::TerrainVertex;
 
-const SECTION_VERTEX_COUNT: u32 = 276;
+#[cfg(not(test))]
+mod allocator;
+mod world;
+
+const WORLD_VERTEX_CAPACITY: u32 = world::MAX_VERTEX_COUNT as u32;
 #[cfg(test)]
-const BLOCK_VERTEX_COUNT: u32 = SECTION_VERTEX_COUNT / 4 * 6;
-const BASE_Y: i32 = 64;
-const BLOCK_HEIGHTS: [i32; 9] = [1, 2, 1, 2, 3, 2, 1, 2, 1];
+const WORLD_TRIANGLE_CAPACITY: u32 = WORLD_VERTEX_CAPACITY / 4 * 6;
 const TRIANGLE_VERTICES: [usize; 6] = [0, 1, 2, 0, 2, 3];
-const FACE_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 const GX2_VERTEX_SCALARS: usize = 12;
 const DEGREES_TO_RADIANS: f32 = core::f32::consts::PI / 180.0;
 
@@ -64,32 +68,6 @@ fn project_position(position: [f32; 3], section_origin: [f32; 3], camera: Camera
     ]
 }
 
-fn atlas_uv(tile_x: u32, tile_y: u32, uv: [f32; 2]) -> [f32; 2] {
-    let tile_origin = [
-        tile_x as f32 * 0.5 + 1.0 / 16.0,
-        tile_y as f32 * 0.5 + 1.0 / 16.0,
-    ];
-    [
-        tile_origin[0] + uv[0] * 3.0 / 8.0,
-        tile_origin[1] + uv[1] * 3.0 / 8.0,
-    ]
-}
-
-fn make_terrain_vertex(position: BlockPos, uv: [f32; 2], color: [f32; 3]) -> TerrainVertex {
-    let y = (position.y - BASE_Y) as f32;
-    let packed_color = 0xFF00_0000
-        | ((color[2] * 255.0 + 0.5) as u32) << 16
-        | ((color[1] * 255.0 + 0.5) as u32) << 8
-        | (color[0] * 255.0 + 0.5) as u32;
-    TerrainVertex::new(
-        [position.x as f32 + 1.0, y, position.z as f32 + 1.0],
-        uv,
-        0,
-        packed_color,
-        0x00F0,
-    )
-}
-
 /// Maps Horizon's packed sky/block light to the captured 16x16 lightmap.
 fn terrain_light_uv(light: u16) -> [f32; 2] {
     let sky = f32::from((light & 0x00FF).min(240));
@@ -124,119 +102,30 @@ fn write_gx2_vertex(
     vertices[base + 10..base + 12].copy_from_slice(&light_uv);
 }
 
-fn append_face(
-    vertices: &mut [TerrainVertex],
-    first_vertex: usize,
-    corners: [BlockPos; 4],
-    tile: (u32, u32),
-    color: [f32; 3],
-) -> usize {
-    for (corner_index, corner) in corners.into_iter().enumerate() {
-        let uv = atlas_uv(tile.0, tile.1, FACE_UVS[corner_index]);
-        vertices[first_vertex + corner_index] = make_terrain_vertex(corner, uv, color);
-    }
-    first_vertex + corners.len()
-}
-
-fn column_height(x: i32, z: i32) -> i32 {
-    if !(-1..=1).contains(&x) || !(-1..=1).contains(&z) {
-        return 0;
-    }
-    BLOCK_HEIGHTS[((z + 1) * 3 + (x + 1)) as usize]
-}
-
-fn append_column(
-    vertices: &mut [TerrainVertex],
-    first_vertex: usize,
-    x: i32,
-    z: i32,
-    height: i32,
-) -> usize {
-    let mut next = first_vertex;
-
-    for level in 0..height {
-        let origin = BlockPos::new(x, BASE_Y + level, z);
-        let x0y0z0 = origin;
-        let x1y0z0 = origin.offset(1, 0, 0);
-        let x0y0z1 = origin.offset(0, 0, 1);
-        let x1y0z1 = origin.offset(1, 0, 1);
-        let x0y1z0 = origin.offset(0, 1, 0);
-        let x1y1z0 = origin.offset(1, 1, 0);
-        let x0y1z1 = origin.offset(0, 1, 1);
-        let x1y1z1 = origin.offset(1, 1, 1);
-
-        if level == height - 1 {
-            next = append_face(
-                vertices,
-                next,
-                [x0y1z0, x1y1z0, x1y1z1, x0y1z1],
-                (0, 0),
-                [1.0, 1.0, 1.0],
-            );
-        }
-        if level >= column_height(x + 1, z) {
-            next = append_face(
-                vertices,
-                next,
-                [x1y1z0, x1y0z0, x1y0z1, x1y1z1],
-                (1, 0),
-                [0.96, 0.96, 0.96],
-            );
-        }
-        if level >= column_height(x, z + 1) {
-            next = append_face(
-                vertices,
-                next,
-                [x0y1z1, x1y1z1, x1y0z1, x0y0z1],
-                (1, 0),
-                [0.82, 0.82, 0.82],
-            );
-        }
-        if level >= column_height(x - 1, z) {
-            next = append_face(
-                vertices,
-                next,
-                [x0y1z0, x0y1z1, x0y0z1, x0y0z0],
-                (1, 0),
-                [0.82, 0.82, 0.82],
-            );
-        }
-        if level >= column_height(x, z - 1) {
-            next = append_face(
-                vertices,
-                next,
-                [x1y1z0, x0y1z0, x0y0z0, x1y0z0],
-                (1, 0),
-                [0.68, 0.68, 0.68],
-            );
-        }
-    }
-    next
-}
-
-/// Fills a small Horizon-positioned block landscape for the GX2 renderer.
-///
-/// The fixed 3x3 heightmap is an integration fixture. Each vertex is produced
-/// from Horizon's real BlockPos type and then projected for GX2 clip space.
+/// Generates a bounded chunk with Horizon's seeded 26.3 Perlin noise, stores
+/// its block states, and emits the chunk's exposed faces for the GX2 backend.
 #[unsafe(no_mangle)]
-pub extern "C" fn horizon_wiiu_build_block_section(
+pub extern "C" fn horizon_wiiu_build_runtime_chunk(
     vertices: *mut TerrainVertex,
     capacity: u32,
+    heights: *mut i16,
+    height_capacity: u32,
+    seed: i64,
 ) -> u32 {
-    if vertices.is_null() || capacity < SECTION_VERTEX_COUNT {
+    if vertices.is_null()
+        || capacity < WORLD_VERTEX_CAPACITY
+        || heights.is_null()
+        || height_capacity < 16 * 16
+    {
         return 0;
     }
 
     // SAFETY: C supplies an aligned writable array with the checked capacity.
     let vertices = unsafe { core::slice::from_raw_parts_mut(vertices, capacity as usize) };
-    let mut next_vertex = 0;
-    for (column, height) in BLOCK_HEIGHTS.into_iter().enumerate() {
-        let x = column as i32 % 3 - 1;
-        let z = column as i32 / 3 - 1;
-        next_vertex = append_column(vertices, next_vertex, x, z, height);
-    }
-
-    next_vertex as u32
+    // SAFETY: C supplies a writable height map with the checked capacity.
+    let heights = unsafe { core::slice::from_raw_parts_mut(heights, height_capacity as usize) };
+    world::build_chunk(vertices, heights, seed, ChunkPos::new(-1, -1))
+        .map_or(0, |count| count as u32)
 }
 
 /// Converts Horizon's four-vertex terrain quads to GX2's triangle-list layout.
@@ -363,47 +252,54 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        horizon_wiiu_build_block_section, horizon_wiiu_camera_motion,
+        horizon_wiiu_build_runtime_chunk, horizon_wiiu_camera_motion,
         horizon_wiiu_encode_terrain_quads, project_position, terrain_light_uv, Camera,
-        BLOCK_VERTEX_COUNT, GX2_VERTEX_SCALARS, SECTION_VERTEX_COUNT,
+        GX2_VERTEX_SCALARS, WORLD_TRIANGLE_CAPACITY, WORLD_VERTEX_CAPACITY,
     };
     use horizon_terrain_data::TerrainVertex;
+    use std::vec;
 
     #[test]
-    fn fixed_section_quads_expand_to_gx2_triangles() {
+    fn runtime_horizon_chunk_quads_expand_to_gx2_triangles() {
         let mut source =
-            [TerrainVertex::new([0.0; 3], [0.0; 2], 0, 0, 0); SECTION_VERTEX_COUNT as usize];
-        let source_count =
-            horizon_wiiu_build_block_section(source.as_mut_ptr(), SECTION_VERTEX_COUNT);
-        assert!(source_count > 0);
+            vec![TerrainVertex::new([0.0; 3], [0.0; 2], 0, 0, 0); WORLD_VERTEX_CAPACITY as usize];
+        let mut heights = [0i16; 16 * 16];
+        let source_count = horizon_wiiu_build_runtime_chunk(
+            source.as_mut_ptr(),
+            WORLD_VERTEX_CAPACITY,
+            heights.as_mut_ptr(),
+            heights.len() as u32,
+            12_345,
+        );
+        assert!(source_count >= 16 * 16 * 4);
         assert_eq!(source_count % 4, 0);
+        assert!(heights.iter().all(|height| (49..80).contains(height)));
 
-        let mut output = [0.0f32; BLOCK_VERTEX_COUNT as usize * GX2_VERTEX_SCALARS];
-        let camera = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.05, 256.0];
+        let mut output = vec![0.0f32; WORLD_TRIANGLE_CAPACITY as usize * GX2_VERTEX_SCALARS];
+        let camera = [-8.0, 70.0, -24.0, 0.0, 28.0, 1.0, 1.0, 0.05, 256.0];
         let output_count = horizon_wiiu_encode_terrain_quads(
             source.as_ptr(),
             source_count,
             output.as_mut_ptr(),
-            BLOCK_VERTEX_COUNT,
-            -1.0,
+            WORLD_TRIANGLE_CAPACITY,
             0.0,
-            -1.0,
+            64.0,
+            0.0,
             camera.as_ptr(),
-            0,
+            1,
         );
 
         assert_eq!(output_count, source_count / 4 * 6);
-        assert!(output_count <= BLOCK_VERTEX_COUNT);
-        assert_eq!(source[0].pos, [0.0, 1.0, 0.0]);
+        assert!(output_count <= WORLD_TRIANGLE_CAPACITY);
+        assert!(source[..source_count as usize]
+            .iter()
+            .all(|vertex| vertex.pos.iter().all(|value| value.is_finite())));
         assert_eq!(source[0].rgba(), [255, 255, 255, 255]);
-        assert_eq!(source[0].uv(), [1.0 / 16.0, 1.0 / 16.0]);
         assert_eq!(&output[4..7], &[1.0, 1.0, 1.0]);
-        assert_eq!(output[7], 1.0 / 16.0);
-        assert_eq!(output[8], 1.0 / 16.0);
         assert_eq!(output[9], 1.0);
         assert!((output[10] - 1.0 / 32.0).abs() < 0.00001);
         assert!((output[11] - 31.0 / 32.0).abs() < 0.00001);
-        assert!((output[12] - 0.215).abs() < 0.00001);
+        assert!(output[3] > 0.0);
     }
 
     #[test]

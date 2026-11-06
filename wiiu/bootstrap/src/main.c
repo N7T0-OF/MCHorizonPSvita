@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <coreinit/debug.h>
 #include <gx2/clear.h>
 #include <gx2/draw.h>
 #include <gx2/registers.h>
@@ -18,8 +19,9 @@
 extern void horizon_wiiu_frame_color(uint32_t frame, float rgba[4]);
 extern const uint8_t _binary_horizon_block_gsh_start[];
 
-#define BLOCK_VERTEX_COUNT 414
-#define SECTION_VERTEX_COUNT 276
+#define WORLD_VERTEX_CAPACITY 66560
+#define WORLD_TRIANGLE_CAPACITY ((WORLD_VERTEX_CAPACITY / 4) * 6)
+#define GROUND_HEIGHT_COUNT (16 * 16)
 #define ATLAS_TILE_SIZE 4
 #define ATLAS_SIZE (ATLAS_TILE_SIZE * 2)
 
@@ -41,8 +43,11 @@ typedef struct HorizonTerrainVertex {
 
 _Static_assert(sizeof(HorizonTerrainVertex) == 24, "Horizon TerrainVertex ABI must stay 24 bytes");
 
-extern uint32_t horizon_wiiu_build_block_section(HorizonTerrainVertex *vertices,
-                                                  uint32_t capacity);
+extern uint32_t horizon_wiiu_build_runtime_chunk(HorizonTerrainVertex *vertices,
+                                                  uint32_t capacity,
+                                                  int16_t *heights,
+                                                  uint32_t heightCapacity,
+                                                  int64_t seed);
 extern uint32_t horizon_wiiu_encode_terrain_quads(const HorizonTerrainVertex *source,
                                                    uint32_t source_vertex_count,
                                                    float *output,
@@ -78,7 +83,8 @@ static const HorizonTerrainVertex *sBlockSection;
 static uint32_t sAtlasWidth;
 static uint32_t sAtlasHeight;
 #ifndef HORIZON_WIIU_CAPTURE
-static HorizonTerrainVertex sFixtureSection[SECTION_VERTEX_COUNT];
+static HorizonTerrainVertex sRuntimeChunk[WORLD_VERTEX_CAPACITY];
+static int16_t sGroundHeights[GROUND_HEIGHT_COUNT];
 #endif
 static float sSectionOrigin[3];
 static uint32_t sBlockSectionVertexCount;
@@ -281,17 +287,27 @@ init_block_mesh(void)
    sAspect = horizon_wiiu_capture_view[3];
    sBlockOutputCapacity = sBlockSectionVertexCount / 4 * 6;
 #else
-   sBlockSection = sFixtureSection;
-   sSectionOrigin[0] = -1.0f;
-   sSectionOrigin[1] = 0.0f;
-   sSectionOrigin[2] = -1.0f;
-   sBlockSectionVertexCount = horizon_wiiu_build_block_section(sFixtureSection,
-                                                                SECTION_VERTEX_COUNT);
-   if (sBlockSectionVertexCount == 0 || sBlockSectionVertexCount > SECTION_VERTEX_COUNT) {
+   sBlockSection = sRuntimeChunk;
+   sSectionOrigin[0] = 0.0f;
+   sSectionOrigin[1] = 64.0f;
+   sSectionOrigin[2] = 0.0f;
+   sBlockSectionVertexCount = horizon_wiiu_build_runtime_chunk(
+      sRuntimeChunk, WORLD_VERTEX_CAPACITY,
+      sGroundHeights, GROUND_HEIGHT_COUNT, INT64_C(12345));
+   if (sBlockSectionVertexCount == 0 || sBlockSectionVertexCount > WORLD_VERTEX_CAPACITY
+       || (sBlockSectionVertexCount % 4) != 0) {
+      OSReport("HorizonWiiU: runtime chunk generation failed (%u vertices)\n",
+               sBlockSectionVertexCount);
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
    }
-   sBlockOutputCapacity = BLOCK_VERTEX_COUNT;
+   OSReport("HorizonWiiU: generated chunk (-1,-1), %u exposed-face vertices\n",
+            sBlockSectionVertexCount);
+   sBlockOutputCapacity = sBlockSectionVertexCount / 4 * 6;
+   sCameraX = -8.0f;
+   sCameraZ = -2.0f;
+   sCameraY = (float)sGroundHeights[14 * 16 + 8] + 1.62f;
+   sCameraPitch = 8.0f;
 #endif
 
    if (sBlockOutputCapacity == 0 || sBlockOutputCapacity > UINT32_MAX / sizeof(Vertex)) {
@@ -365,10 +381,20 @@ update_camera(void)
    sCameraX += movement[0];
    sCameraZ += movement[1];
 
+#ifdef HORIZON_WIIU_CAPTURE
    if (sCameraX < -4.0f) sCameraX = -4.0f;
    if (sCameraX > 4.0f) sCameraX = 4.0f;
    if (sCameraZ < -4.0f) sCameraZ = -4.0f;
    if (sCameraZ > 4.0f) sCameraZ = 4.0f;
+#else
+   if (sCameraX < -15.5f) sCameraX = -15.5f;
+   if (sCameraX > -0.5f) sCameraX = -0.5f;
+   if (sCameraZ < -15.5f) sCameraZ = -15.5f;
+   if (sCameraZ > -0.5f) sCameraZ = -0.5f;
+   const int32_t localX = (int32_t)(sCameraX + 16.0f);
+   const int32_t localZ = (int32_t)(sCameraZ + 16.0f);
+   sCameraY = (float)sGroundHeights[localZ * 16 + localX] + 1.62f;
+#endif
    if (sCameraX != previousCameraX || sCameraZ != previousCameraZ
        || sCameraYaw != previousCameraYaw || sCameraPitch != previousCameraPitch) {
       sBlockMeshDirty = TRUE;
@@ -390,7 +416,7 @@ update_block_mesh(void)
 #ifdef HORIZON_WIIU_CAPTURE
    const uint32_t perspective = 1;
 #else
-   const uint32_t perspective = 0;
+   const uint32_t perspective = 1;
 #endif
    uint32_t vertexCount = horizon_wiiu_encode_terrain_quads(sBlockSection,
                                                              sBlockSectionVertexCount,

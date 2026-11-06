@@ -33,7 +33,7 @@ impl Md5 {
         }
     }
     fn block(&mut self, block: &[u8; 64]) {
-        let words = std::array::from_fn::<_, 16, _>(|i| {
+        let words = core::array::from_fn::<_, 16, _>(|i| {
             u32::from_le_bytes(block[i * 4..i * 4 + 4].try_into().unwrap())
         });
         let [mut a, mut b, mut c, mut d] = self.state;
@@ -91,7 +91,7 @@ impl Md5 {
         padding[0] = 0x80;
         self.update(&padding[..count]);
         self.update(&length);
-        std::array::from_fn(|i| self.state[i / 4].to_le_bytes()[i % 4])
+        core::array::from_fn(|i| self.state[i / 4].to_le_bytes()[i % 4])
     }
 }
 fn seed(digest: [u8; 16]) -> [u64; 2] {
@@ -118,6 +118,7 @@ pub fn seed_from_hash_utf16(name: &[u16]) -> [u64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{format, string::String};
     #[test]
     fn rfc_vectors_and_streaming_padding_boundaries() {
         for (input, expected) in [
