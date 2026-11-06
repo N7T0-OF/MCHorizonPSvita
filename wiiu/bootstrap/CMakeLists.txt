@@ -3,6 +3,7 @@ project(horizon_wiiu_bootstrap C)
 
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 find_program(POWERPC_OBJCOPY_EXECUTABLE powerpc-eabi-objcopy REQUIRED)
+find_program(CAFEGLSL_COMPILER_EXECUTABLE glslcompiler REQUIRED)
 
 set(RUST_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rust-target")
 set(RUST_TARGET_NAME "powerpc-cafe-nintendo")
@@ -29,8 +30,34 @@ add_custom_target(horizon_wiiu_rust DEPENDS "${RUST_STATICLIB}")
 add_library(horizon_wiiu_rustlib STATIC IMPORTED GLOBAL)
 set_target_properties(horizon_wiiu_rustlib PROPERTIES IMPORTED_LOCATION "${RUST_STATICLIB}")
 
-add_executable(horizon_wiiu_bootstrap src/main.c)
+set(GSH "${CMAKE_CURRENT_BINARY_DIR}/horizon_triangle.gsh")
+set(GSH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/horizon_triangle_gsh.o")
+add_custom_command(
+   OUTPUT "${GSH}"
+   COMMAND "${CAFEGLSL_COMPILER_EXECUTABLE}"
+      -vs "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert"
+      -ps "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag"
+      -o "${GSH}"
+   DEPENDS shaders/triangle.vert shaders/triangle.frag
+   COMMENT "Compiling the GX2 triangle shaders"
+   VERBATIM
+)
+add_custom_command(
+   OUTPUT "${GSH_OBJECT}"
+   COMMAND "${POWERPC_OBJCOPY_EXECUTABLE}"
+      -I binary -O elf32-powerpc -B powerpc:common
+      horizon_triangle.gsh horizon_triangle_gsh.o
+   DEPENDS "${GSH}"
+   WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+   COMMENT "Embedding the GFD shader file in the RPX"
+   VERBATIM
+)
+set_source_files_properties("${GSH_OBJECT}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_custom_target(horizon_wiiu_shaders DEPENDS "${GSH_OBJECT}")
+
+add_executable(horizon_wiiu_bootstrap src/main.c "${GSH_OBJECT}")
 add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_rust)
+add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_shaders)
 target_link_libraries(horizon_wiiu_bootstrap PRIVATE horizon_wiiu_rustlib)
 
 set(PACKAGE_ELF "${CMAKE_CURRENT_BINARY_DIR}/horizon_wiiu_bootstrap.package.elf")
