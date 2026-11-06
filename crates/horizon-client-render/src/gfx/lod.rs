@@ -569,12 +569,10 @@ mod tests {
     #[test]
     fn large_tile_bounds_include_water_and_do_not_cull_by_origin() {
         let vertex = |pos| TerrainVertex::tiled(pos, [0.0; 2], 0, 0, 0);
-        let mesh = SectionMesh {
-            solid: vec![vertex([0.0, -64.0, 0.0]), vertex([1024.0, 100.0, 1024.0])],
-            translucent: vec![vertex([512.0, 120.0, 512.0])],
-            bounds: Some([Vec3::new(0.0, -64.0, 0.0), Vec3::new(1024.0, 120.0, 1024.0)]),
-            ..Default::default()
-        };
+        let mut mesh = SectionMesh::default();
+        mesh.solid = vec![vertex([0.0, -64.0, 0.0]), vertex([1024.0, 100.0, 1024.0])];
+        mesh.translucent = vec![vertex([512.0, 120.0, 512.0])];
+        mesh.bounds = Some([Vec3::new(0.0, -64.0, 0.0), Vec3::new(1024.0, 120.0, 1024.0)]);
         let bounds = Bounds::mesh(&mesh).unwrap();
         assert_eq!(bounds.min, Vec3::new(0.0, -64.0, 0.0));
         assert_eq!(bounds.max, Vec3::new(1024.0, 120.0, 1024.0));

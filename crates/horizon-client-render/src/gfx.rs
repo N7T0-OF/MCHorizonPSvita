@@ -13192,11 +13192,9 @@ mod sprite_upload_tests {
         let opaque_vertex =
             TerrainVertex::new([0.0, 0.0, 0.0], [0.0, 0.0], 7 | mesher::OPAQUE_LAYER, 0, 0);
         let translucent_vertex = TerrainVertex::new([0.0, 0.0, 0.0], [0.0, 0.0], 12, 0, 0);
-        let mut mesh = SectionMesh {
-            solid: vec![opaque_vertex; 4],
-            translucent: vec![translucent_vertex; 4],
-            ..Default::default()
-        };
+        let mut mesh = SectionMesh::default();
+        mesh.solid = vec![opaque_vertex; 4];
+        mesh.translucent = vec![translucent_vertex; 4];
         mesh.note_sprite_layer(7 | mesher::OPAQUE_LAYER);
         mesh.note_sprite_layer(12);
         mesh.finish_sprite_layers();

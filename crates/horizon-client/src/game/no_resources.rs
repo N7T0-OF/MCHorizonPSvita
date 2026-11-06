@@ -2,6 +2,7 @@
 //! through the launcher): a window that says where to get the launcher
 //! (`horizon_client::no_resources`) and quits when it is closed. No loader, no
 //! crash report: nothing went wrong in the game.
+use super::event_loop::{EventLoopControl, EventLoopCtl, WinitEventLoop};
 use super::*;
 use horizon_client::no_resources::{Action, DOWNLOAD_URL, NoResources};
 use winit::event::MouseButton;
@@ -163,8 +164,9 @@ impl ApplicationHandler for Missing {
             return;
         }
         // Wake now and then for Ctrl+C in the console; redraws come with events.
-        event_loop.set_control_flow(ControlFlow::WaitUntil(
-            Instant::now() + Duration::from_millis(250),
-        ));
+        EventLoopCtl::set_control_flow(
+            &WinitEventLoop::new(event_loop),
+            EventLoopControl::WaitUntil(Instant::now() + Duration::from_millis(250)),
+        );
     }
 }

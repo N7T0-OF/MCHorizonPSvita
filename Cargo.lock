@@ -1377,6 +1377,7 @@ dependencies = [
  "horizon-client-core",
  "horizon-client-input",
  "horizon-client-lib",
+ "horizon-client-platform",
  "horizon-client-render",
  "horizon-command",
  "horizon-core",
@@ -1502,6 +1503,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-client-platform"
+version = "0.1.0"
+
+[[package]]
 name = "horizon-client-render"
 version = "0.1.0"
 dependencies = [
@@ -1529,7 +1534,7 @@ dependencies = [
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-telemetry",
- "horizon-terrain-data",
+ "horizon-terrain-mesh",
  "horizon-theme",
  "horizon-threads",
  "horizon-world",
@@ -1847,6 +1852,16 @@ name = "horizon-terrain-data"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "horizon-terrain-mesh"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "horizon-terrain-data",
+ "serde",
 ]
 
 [[package]]

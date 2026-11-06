@@ -17,7 +17,7 @@
 //! - word 4: corners 1 and 2's light;
 //! - word 5: corner 3's light, the face (block x, y, z, the axis it faces along, which side
 //!   of the block, and where and which way its corners go round), and `FULL` clear.
-use super::TerrainVertex;
+use crate::TerrainVertex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// A solid quad's tint the mesher does not know (fluids): only untinted colours pack.

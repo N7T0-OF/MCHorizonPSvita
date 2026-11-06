@@ -1,0 +1,16 @@
+[package]
+name = "horizon-terrain-mesh"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Portable terrain section meshes and their compact layouts"
+
+[dependencies]
+horizon-terrain-data = { path = "../horizon-terrain-data" }
+bytemuck = "1.24"
+glam = "0.30"
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

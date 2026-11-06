@@ -3,6 +3,7 @@ exclude = ["launcher", "crates/horizon-telemetry-server", "crates/horizon-mod-re
 members = [
     "crates/horizon-core",
     "crates/horizon-terrain-data",
+    "crates/horizon-terrain-mesh",
     "crates/horizon-dualsense",
     "crates/horizon-narrator",
     "crates/horizon-threads",
@@ -11,6 +12,7 @@ members = [
     "crates/horizon-client",
     "crates/horizon-client-lib",
     "crates/horizon-client-core",
+    "crates/horizon-client-platform",
     "crates/horizon-client-input",
     "crates/horizon-client-render",
     "crates/horizon-cosmetics",

@@ -379,7 +379,7 @@ mod world_loading;
 mod world_primitives;
 mod zombie_reinforcements;
 mod zombie_villagers;
-use event_loop::EventLoopCtl;
+use event_loop::{EventLoopControl, EventLoopCtl, WinitEventLoop};
 // `Action` here is the title screen's buttons (`title::Action`).
 use horizon_client::actions::Action as Mapping;
 use horizon_client::held::Source;
@@ -479,7 +479,7 @@ use winit::{
     application::ApplicationHandler,
     error::EventLoopError,
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
 };
@@ -17899,7 +17899,12 @@ impl ApplicationHandler for Game<'_> {
         } else {
             None
         };
-        self.handle_window_event(event_loop, id, event, input_trace::InputOrigin::User);
+        self.handle_window_event(
+            &WinitEventLoop::new(event_loop),
+            id,
+            event,
+            input_trace::InputOrigin::User,
+        );
         if let Some((event, modifiers)) = key {
             self.native_input_key(&event, modifiers);
         }
@@ -17916,7 +17921,7 @@ impl ApplicationHandler for Game<'_> {
             && let DeviceEvent::MouseMotion { delta: (x, y) } = event
         {
             if x != 0.0 || y != 0.0 {
-                self.pad_yield_input(event_loop);
+                self.pad_yield_input(&WinitEventLoop::new(event_loop));
             }
             // MouseHandler.onMove with the pointer grabbed; applied once per frame.
             self.note_input(
@@ -17928,7 +17933,7 @@ impl ApplicationHandler for Game<'_> {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.idle(event_loop);
+        self.idle(&WinitEventLoop::new(event_loop));
     }
     /// The application is ending. On macOS, Quit (Cmd+Q) ends it through
     /// applicationWillTerminate without a CloseRequested; vanilla's GLFW
@@ -19494,7 +19499,7 @@ impl Game<'_> {
                         window.request_redraw();
                     }
                     // Yield between polls even when disk I/O is slow.
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    event_loop.set_control_flow(EventLoopControl::WaitUntil(
                         Instant::now() + Duration::from_millis(4),
                     ));
                 }
@@ -22061,7 +22066,7 @@ impl Loading {
             return;
         }
         follow_keymap(&mut event);
-        if let Err(error) = self.menu_event(event_loop, event) {
+        if let Err(error) = self.menu_event(&WinitEventLoop::new(event_loop), event) {
             self.error = Some(error);
             event_loop.exit();
         }
@@ -22121,7 +22126,7 @@ impl Loading {
             event_loop.exit();
             return;
         }
-        self.poll_menu_realms(event_loop);
+        self.poll_menu_realms(&WinitEventLoop::new(event_loop));
         if let Some(w) = &self.window {
             if self.options.as_ref().is_some_and(|o| o.offscreen) {
                 self.draw();
@@ -22129,7 +22134,7 @@ impl Loading {
                 w.request_redraw();
             }
         }
-        event_loop.set_control_flow(ControlFlow::Poll);
+        EventLoopCtl::set_control_flow(&WinitEventLoop::new(event_loop), EventLoopControl::Poll);
     }
     fn draw(&mut self) {
         let Some(size) = self

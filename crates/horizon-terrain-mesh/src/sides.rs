@@ -25,7 +25,7 @@
 //! cutout ones, so one pass over all of them draws the runs it drew before.
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::{OPAQUE_LAYER, TerrainVertex};
+use crate::{OPAQUE_LAYER, TerrainVertex};
 
 /// The buckets in mesh order: +X, +Z, other, +Y, -Z, -X, -Y. Seen from
 /// above (+Y, the commonest case), each pair of horizontal sides with a
@@ -104,13 +104,8 @@ impl Sides {
     }
 
     /// A sort with these parts' `ends` and `planes`, for tests.
-    #[cfg(test)]
-    pub(crate) fn from_parts(
-        ends: [u32; 14],
-        grouped: bool,
-        split: bool,
-        planes: [f32; 7],
-    ) -> Self {
+    #[doc(hidden)]
+    pub fn from_parts(ends: [u32; 14], grouped: bool, split: bool, planes: [f32; 7]) -> Self {
         Self {
             ends,
             grouped,

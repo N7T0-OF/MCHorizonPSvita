@@ -64,19 +64,18 @@ impl Copies {
 }
 
 fn copy(mesh: &SectionMesh) -> SectionMesh {
-    SectionMesh {
-        solid: mesh.solid.clone(),
-        sides: mesh.sides,
-        translucent: mesh.translucent.clone(),
-        packed: mesh.packed.clone(),
-        solid_tints: Vec::new(),
-        visibility: mesh.visibility,
-        block_entities: mesh.block_entities.clone(),
-        lights: mesh.lights.clone(),
-        sprite_layers: mesh.sprite_layers.clone(),
-        bounds: mesh.bounds,
-        keep: mesh.keep,
-    }
+    let mut copy = SectionMesh::default();
+    copy.solid.clone_from(&mesh.solid);
+    copy.sides = mesh.sides;
+    copy.translucent.clone_from(&mesh.translucent);
+    copy.packed.clone_from(&mesh.packed);
+    copy.visibility = mesh.visibility;
+    copy.block_entities.clone_from(&mesh.block_entities);
+    copy.lights.clone_from(&mesh.lights);
+    copy.sprite_layers.clone_from(&mesh.sprite_layers);
+    copy.bounds = mesh.bounds;
+    copy.keep = mesh.keep;
+    copy
 }
 
 /// A capture asked for: where to write it, and the game's settings the renderer does not hold.
@@ -312,23 +311,19 @@ pub fn read_meshes(
         blob.read_exact(bytemuck::cast_slice_mut::<TerrainVertex, u8>(
             translucent.as_mut_slice(),
         ))?;
-        each(
-            record.key,
-            SectionMesh {
-                solid,
-                sides: record.sides,
-                translucent,
-                visibility: record.visibility,
-                block_entities: record.block_entities,
-                lights: record.lights,
-                sprite_layers: record.sprite_layers,
-                bounds: record
-                    .bounds
-                    .map(|[min, max]| [Vec3::from_array(min), Vec3::from_array(max)]),
-                keep: record.keep,
-                ..Default::default()
-            },
-        );
+        let mut mesh = SectionMesh::default();
+        mesh.solid = solid;
+        mesh.sides = record.sides;
+        mesh.translucent = translucent;
+        mesh.visibility = record.visibility;
+        mesh.block_entities = record.block_entities;
+        mesh.lights = record.lights;
+        mesh.sprite_layers = record.sprite_layers;
+        mesh.bounds = record
+            .bounds
+            .map(|[min, max]| [Vec3::from_array(min), Vec3::from_array(max)]);
+        mesh.keep = record.keep;
+        each(record.key, mesh);
     }
     Ok(())
 }

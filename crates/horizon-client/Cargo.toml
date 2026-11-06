@@ -15,6 +15,7 @@ horizon-cosmetics = { path = "../horizon-cosmetics" }
 horizon-client-lib = { path = "../horizon-client-lib", default-features = false }
 horizon-assets = { path = "../horizon-assets" }
 horizon-client-core = { path = "../horizon-client-core" }
+horizon-client-platform = { path = "../horizon-client-platform" }
 horizon-client-input = { path = "../horizon-client-input" }
 horizon-client-render = { path = "../horizon-client-render" }
 horizon-command = { path = "../horizon-command" }
