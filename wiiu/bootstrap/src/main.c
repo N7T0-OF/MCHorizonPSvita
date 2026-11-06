@@ -27,6 +27,8 @@ extern const uint8_t _binary_horizon_block_gsh_start[];
 #define HORIZON_WIIU_WORLD_PROFILE_SUPERFLAT 1
 #define HORIZON_WIIU_WORLD_REGION_RADIUS 1
 #define HORIZON_WIIU_WORLD_REGION_DIAMETER ((HORIZON_WIIU_WORLD_REGION_RADIUS * 2 + 1) * 16)
+#define HORIZON_WIIU_WORLD_GROUND_HEIGHT_COUNT \
+   (HORIZON_WIIU_WORLD_REGION_DIAMETER * HORIZON_WIIU_WORLD_REGION_DIAMETER)
 
 typedef struct Vertex {
    float position[4];
@@ -107,7 +109,11 @@ static void *sRuntimeWorldChunk;
 #else
 static HorizonTerrainVertex sRuntimeChunk[WORLD_VERTEX_CAPACITY];
 #endif
+#ifdef HORIZON_WIIU_WORLDGEN
+static int16_t sGroundHeights[HORIZON_WIIU_WORLD_GROUND_HEIGHT_COUNT];
+#else
 static int16_t sGroundHeights[GROUND_HEIGHT_COUNT];
+#endif
 #endif
 static float sSectionOrigin[3];
 static uint32_t sBlockSectionVertexCount;
@@ -362,7 +368,8 @@ init_block_mesh(void)
    if (!sBlockSection || sBlockSectionVertexCount == 0
        || (sBlockSectionVertexCount % 4) != 0
        || !horizon_wiiu_world_chunk_heights(sRuntimeWorldChunk,
-                                            sGroundHeights, GROUND_HEIGHT_COUNT)) {
+                                            sGroundHeights,
+                                            HORIZON_WIIU_WORLD_GROUND_HEIGHT_COUNT)) {
 #ifdef HORIZON_WIIU_WORLDGEN
       sBlockInitFailure = 5;
 #endif
@@ -378,9 +385,10 @@ init_block_mesh(void)
    sSectionOrigin[2] = (float)(regionOrigin[1] * 16);
    sCameraX = (float)spawn[0] + 0.5f;
    sCameraZ = (float)spawn[1] + 0.5f;
-   const uint32_t localX = (uint32_t)(spawn[0] - centerChunkX * 16);
-   const uint32_t localZ = (uint32_t)(spawn[1] - centerChunkZ * 16);
-   sCameraY = (float)sGroundHeights[localZ * 16 + localX] + 1.62f;
+   const uint32_t localX = (uint32_t)(spawn[0] - regionOrigin[0] * 16);
+   const uint32_t localZ = (uint32_t)(spawn[1] - regionOrigin[1] * 16);
+   sCameraY = (float)sGroundHeights[
+      localZ * HORIZON_WIIU_WORLD_REGION_DIAMETER + localX] + 1.62f;
    sCameraPitch = 8.0f;
    OSReport("HorizonWiiU: generated Horizon region at (%d,%d), %u vertices, spawn (%d,%d)\n",
             regionOrigin[0], regionOrigin[1], sBlockSectionVertexCount, spawn[0], spawn[1]);
@@ -501,6 +509,10 @@ update_camera(void)
    if (sCameraX > maxX) sCameraX = maxX;
    if (sCameraZ < minZ) sCameraZ = minZ;
    if (sCameraZ > maxZ) sCameraZ = maxZ;
+   const uint32_t localX = (uint32_t)(sCameraX - sSectionOrigin[0]);
+   const uint32_t localZ = (uint32_t)(sCameraZ - sSectionOrigin[2]);
+   sCameraY = (float)sGroundHeights[
+      localZ * HORIZON_WIIU_WORLD_REGION_DIAMETER + localX] + 1.62f;
 #else
    if (sCameraX < -15.5f) sCameraX = -15.5f;
    if (sCameraX > -0.5f) sCameraX = -0.5f;

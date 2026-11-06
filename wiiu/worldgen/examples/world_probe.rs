@@ -72,7 +72,8 @@ fn main() {
     let vertices =
         horizon_wiiu_worldgen::horizon_wiiu_world_chunk_vertices(chunk, &mut vertex_count);
     assert!(!vertices.is_null());
-    let mut heights = [0i16; 256];
+    let height_diameter = ((radius * 2 + 1) * 16) as usize;
+    let mut heights = vec![0i16; height_diameter * height_diameter];
     assert_eq!(
         horizon_wiiu_worldgen::horizon_wiiu_world_chunk_heights(
             chunk,

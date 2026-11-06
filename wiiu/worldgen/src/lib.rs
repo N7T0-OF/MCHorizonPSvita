@@ -161,7 +161,7 @@ struct WorldContext {
 
 struct WorldChunk {
     vertices: Box<[TerrainVertex]>,
-    heights: [i16; COLUMN_COUNT],
+    heights: Box<[i16]>,
     chunk_x: i32,
     chunk_z: i32,
 }
@@ -441,7 +441,7 @@ pub extern "C" fn horizon_wiiu_world_generate_chunk(
     ));
     Box::into_raw(Box::new(WorldChunk {
         vertices,
-        heights,
+        heights: Vec::from(heights).into_boxed_slice(),
         chunk_x,
         chunk_z,
     }))
@@ -493,8 +493,9 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
     };
 
     let side = (radius * 2 + 1) as usize;
+    let diameter = side * 16;
     let mut vertices = Vec::new();
-    let mut heights = [0i16; COLUMN_COUNT];
+    let mut heights = vec![0i16; diameter * diameter];
     for chunk_z in origin_z..=end_z {
         for chunk_x in origin_x..=end_x {
             let (chunk_vertices, chunk_heights) =
@@ -505,11 +506,16 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
                         return ptr::null_mut();
                     }
                 };
-            if chunk_x == center_x && chunk_z == center_z {
-                heights = chunk_heights;
+            let local_chunk_x = ((chunk_x - origin_x) * 16) as usize;
+            let local_chunk_z = ((chunk_z - origin_z) * 16) as usize;
+            for z in 0..16 {
+                let source_row = z * 16;
+                let target_row = (local_chunk_z + z) * diameter + local_chunk_x;
+                heights[target_row..target_row + 16]
+                    .copy_from_slice(&chunk_heights[source_row..source_row + 16]);
             }
-            let offset_x = ((chunk_x - origin_x) * 16) as f32;
-            let offset_z = ((chunk_z - origin_z) * 16) as f32;
+            let offset_x = local_chunk_x as f32;
+            let offset_z = local_chunk_z as f32;
             let mut chunk_vertices = Vec::from(chunk_vertices);
             for vertex in &mut chunk_vertices {
                 vertex.pos[0] += offset_x;
@@ -527,7 +533,7 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
     ));
     Box::into_raw(Box::new(WorldChunk {
         vertices: vertices.into_boxed_slice(),
-        heights,
+        heights: heights.into_boxed_slice(),
         chunk_x: origin_x,
         chunk_z: origin_z,
     }))
@@ -560,13 +566,19 @@ pub extern "C" fn horizon_wiiu_world_chunk_heights(
     heights_out: *mut i16,
     capacity: u32,
 ) -> i32 {
-    if chunk.is_null() || heights_out.is_null() || capacity < COLUMN_COUNT as u32 {
+    if chunk.is_null() || heights_out.is_null() {
         return 0;
     }
     // SAFETY: `chunk` came from a world chunk/region function and remains live.
     let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
-    // SAFETY: C supplies 256 writable height entries after the capacity check.
-    unsafe { ptr::copy_nonoverlapping(chunk.heights.as_ptr(), heights_out, COLUMN_COUNT) };
+    let Ok(height_count) = u32::try_from(chunk.heights.len()) else {
+        return 0;
+    };
+    if capacity < height_count {
+        return 0;
+    }
+    // SAFETY: C supplies `capacity` writable height entries after the check.
+    unsafe { ptr::copy_nonoverlapping(chunk.heights.as_ptr(), heights_out, height_count as usize) };
     1
 }
 
