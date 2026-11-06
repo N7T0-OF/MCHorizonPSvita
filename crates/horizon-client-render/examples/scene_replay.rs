@@ -296,7 +296,11 @@ fn replay(window: Arc<Window>) -> Result<(), Box<dyn std::error::Error>> {
     let leaf_layers = leaf_layers(&render);
     let (mut sections, mut quads, mut leaf_quads) = (0, 0usize, 0usize);
     let mut packed_quads = 0usize;
+    let mut upload_error = None;
     capture::read_meshes(&o.dir, "sections", |[x, y, z], captured| {
+        if upload_error.is_some() {
+            return;
+        }
         if near(x, z) {
             let mesh = remeshed.remove(&[x, y, z]).unwrap_or(captured);
             quads += mesh.solid.len() / 4;
@@ -307,10 +311,16 @@ fn replay(window: Arc<Window>) -> Result<(), Box<dyn std::error::Error>> {
                 .filter(|v| leaf_layers.contains(&v.layer))
                 .count()
                 / 4;
-            renderer.upload((x, y, z), &mesh);
+            if let Err(error) = renderer.upload((x, y, z), &mesh) {
+                upload_error = Some(error);
+                return;
+            }
             sections += 1;
         }
     })?;
+    if let Some(error) = upload_error {
+        return Err(error);
+    }
     let mut tiles: Vec<(TileKey, SectionMesh)> = Vec::new();
     capture::read_meshes(&o.dir, "tiles", |[x, z, level], mesh| {
         let key = TileKey {

@@ -8467,7 +8467,7 @@ impl Game<'_> {
         let Some(window) = &self.window else { return };
         let size = self.renderer.as_ref().map_or_else(
             || window.inner_size().into(),
-            |r| [r.config.width, r.config.height],
+            |renderer| horizon_client::presentation::viewport_size(renderer),
         );
         let [vx, vy] = self.view_at.map(f64::from);
         let centre = winit::dpi::PhysicalPosition::new(
@@ -12899,7 +12899,7 @@ impl Game<'_> {
         self.clear_lod();
         self.pending_uploads.clear();
         if let Some(r) = self.renderer.as_mut() {
-            r.clear_sections(self.world.layout());
+            horizon_client::presentation::clear_sections(r, self.world.layout());
         }
         self.apply_settings();
         self.streaming.sky_light = dim != Dim::Nether;
@@ -13140,7 +13140,7 @@ impl Game<'_> {
         self.clear_lod();
         self.pending_uploads.clear();
         if let Some(r) = self.renderer.as_mut() {
-            r.clear_sections(self.world.layout());
+            horizon_client::presentation::clear_sections(r, self.world.layout());
         }
         // Clear sync data (registries, dialog tags) so dialogs don't leak
         // between worlds.
@@ -16158,7 +16158,7 @@ impl Game<'_> {
                         upgrade,
                         self.cursor,
                     );
-                    return renderer.render(&loading_frame(&hud));
+                    return horizon_client::presentation::present(renderer, &loading_frame(&hud));
                 }
                 return Ok(false);
             }
@@ -16197,7 +16197,7 @@ impl Game<'_> {
                     Some(&status),
                     progress,
                 );
-                return renderer.render(&loading_frame(&hud));
+                return horizon_client::presentation::present(renderer, &loading_frame(&hud));
             }
             return Ok(false);
         }
@@ -16213,7 +16213,7 @@ impl Game<'_> {
                     loader.progress.line(),
                     loader.progress.fraction(),
                 );
-                return renderer.render(&loading_frame(&hud));
+                return horizon_client::presentation::present(renderer, &loading_frame(&hud));
             }
             return Ok(false);
         }
@@ -16229,7 +16229,7 @@ impl Game<'_> {
                     reload.progress.fraction(),
                     self.settings.file.bool("darkMojangStudiosBackground"),
                 );
-                return renderer.render(&loading_frame(&hud));
+                return horizon_client::presentation::present(renderer, &loading_frame(&hud));
             }
             return Ok(false);
         }
@@ -16793,7 +16793,9 @@ impl Game<'_> {
         let result = match self.renderer.as_mut() {
             Some(renderer) => {
                 renderer.set_pass_timing(self.debug || self.gpu_passes);
-                horizon_client::spans::time("renderer", || renderer.render(&frame))
+                horizon_client::spans::time("renderer", || {
+                    horizon_client::presentation::present(renderer, &frame)
+                })
             }
             None => Err("renderer".into()),
         };
@@ -17687,12 +17689,23 @@ impl Game<'_> {
             // The meshes, once copied, are freed by a worker (`Streaming::free`).
             if !budgeted && self.pending_uploads.is_empty() && uploads.len() <= AUTO_UPLOADS_AT_ONCE
             {
+                let mut uploaded = Vec::with_capacity(uploads.len());
+                let mut failed = Vec::new();
                 horizon_client::spans::time("upload", || {
-                    for (key, mesh) in &uploads {
-                        renderer.upload(*key, mesh);
+                    for (key, mesh) in uploads {
+                        match horizon_client::presentation::upload_section(renderer, key, &mesh) {
+                            Ok(()) => uploaded.push((key, mesh)),
+                            Err(error) => {
+                                log::warn!(
+                                    "Horizon: failed to upload section {key:?}; keeping it for retry: {error}"
+                                );
+                                failed.push((key, mesh));
+                            }
+                        }
                     }
                 });
-                self.streaming.free(uploads);
+                self.pending_uploads.extend(failed);
+                self.streaming.free(uploaded);
             } else {
                 // Horizon's chunk-update and upload budgets: the nearest
                 // sections go first, the rest wait for later frames; a newer
@@ -17735,6 +17748,7 @@ impl Game<'_> {
                     AUTO_UPLOAD_TIME
                 };
                 let started = Instant::now();
+                let mut retry = Vec::new();
                 while let Some((_, mesh)) = pending.last() {
                     if auto && count > 0 && started.elapsed() >= auto_time {
                         break;
@@ -17748,14 +17762,26 @@ impl Game<'_> {
                         break;
                     }
                     let (key, mesh) = pending.pop().expect("checked above");
-                    renderer.upload(key, &mesh);
-                    spent.push((key, mesh));
+                    if let Err(error) =
+                        horizon_client::presentation::upload_section(renderer, key, &mesh)
+                    {
+                        log::warn!(
+                            "Horizon: failed to upload section {key:?}; keeping it for retry: {error}"
+                        );
+                        retry.push((key, mesh));
+                    } else {
+                        spent.push((key, mesh));
+                    }
                     count += 1;
                     bytes += size;
                 }
+                pending.extend(retry);
                 self.streaming.free(spent);
             }
-            renderer.remove_columns(unloaded.iter().map(|c| (c.x, c.z)));
+            horizon_client::presentation::remove_columns(
+                renderer,
+                unloaded.iter().map(|c| (c.x, c.z)),
+            );
             // Meshes in the works are the view's terrain while it is new, then edits'.
             let meshing = self.streaming.busy() || !self.pending_uploads.is_empty();
             let sampling = self.lod.as_ref().is_some_and(|lod| lod.sampling());
@@ -18197,7 +18223,7 @@ impl Game<'_> {
                 }
                 WindowEvent::Resized(size) => {
                     if let Some(r) = &mut self.renderer {
-                        r.resize(size.width, size.height);
+                        horizon_client::presentation::resize(r, size.width, size.height);
                     }
                 }
                 WindowEvent::RedrawRequested => {
@@ -18361,7 +18387,7 @@ impl Game<'_> {
                 }
                 WindowEvent::Resized(size) => {
                     if let Some(r) = &mut self.renderer {
-                        r.resize(size.width, size.height);
+                        horizon_client::presentation::resize(r, size.width, size.height);
                     }
                     self.observe_fullscreen();
                 }
@@ -22057,7 +22083,7 @@ impl Loading {
         };
         let offscreen = self.options.as_ref().is_some_and(|o| o.offscreen);
         if let Some(renderer) = &mut self.renderer {
-            renderer.release_surface();
+            horizon_client::presentation::release_surface(renderer);
         }
         let bundle = self.gui.as_ref().expect("the menu bundle was just set");
         let _step = startup::step("renderer.title_artwork");
@@ -22122,7 +22148,7 @@ impl Loading {
             self.settings.file.double("panoramaScrollSpeed") as f32,
         );
         if let Some(renderer) = &mut self.renderer {
-            match renderer.render(&frame) {
+            match horizon_client::presentation::present(renderer, &frame) {
                 Ok(true) if self.gui.is_some() && self.menu.pending.is_none() => {
                     self.title_drawn = true;
                     self.menu.perf.title_shown()
@@ -22151,7 +22177,7 @@ impl Loading {
         let window = self.window.clone().ok_or("window closed")?;
         // Keep the loader's device and swap in the real textures in one step.
         if let Some(renderer) = &mut self.renderer {
-            renderer.release_surface();
+            horizon_client::presentation::release_surface(renderer);
         }
         let renderer_at = Instant::now();
         let renderer = startup::time("renderer.world", || {

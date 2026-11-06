@@ -435,7 +435,11 @@ impl Loading {
     pub(super) fn apply_menu_settings(&mut self) {
         if let Some(renderer) = &mut self.renderer {
             renderer.gamma = self.settings.gamma;
-            renderer.set_present_mode(self.settings.vsync, self.settings.horizon.present_mode);
+            horizon_client::presentation::set_present_mode(
+                renderer,
+                self.settings.vsync,
+                self.settings.horizon.present_mode,
+            );
         }
         horizon_client::hud::GUI_SCALE.store(self.settings.gui_scale, Ordering::Relaxed);
         super::narrator::sync(&self.settings);
@@ -1005,7 +1009,7 @@ impl Loading {
             }
             WindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
-                    r.resize(size.width, size.height);
+                    horizon_client::presentation::resize(r, size.width, size.height);
                 }
                 self.apply_menu_settings();
             }

@@ -5241,7 +5241,7 @@ impl Renderer {
     ) -> Option<bool> {
         self.occlusion.visible_for_camera(key, camera_section)
     }
-    pub fn upload(&mut self, key: SectionKey, mesh: &SectionMesh) {
+    pub fn upload(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<()> {
         if let Some(copies) = &mut self.capture_copies {
             copies.section(key, mesh);
         }
@@ -5291,15 +5291,18 @@ impl Renderer {
             }
             None => None,
         };
-        if fading.is_none() && !self.section_uploaded.contains_key(&key) {
-            let now = std::time::Instant::now();
-            self.section_uploaded.insert(key, now);
-            self.newest_upload = Some(now);
-        }
+        let starts_fade = fading.is_none() && !self.section_uploaded.contains_key(&key);
         self.release_section(key);
         let section = self
             .upload_mesh(mesh)
             .map(|section| SectionGpu { fading, ..section });
+        let allocation_failed =
+            section.is_none() && (!mesh.solid.is_empty() || !mesh.translucent.is_empty());
+        if starts_fade && !allocation_failed {
+            let now = std::time::Instant::now();
+            self.section_uploaded.insert(key, now);
+            self.newest_upload = Some(now);
+        }
         self.set_detail(
             key,
             section.is_some() || (mesh.solid.is_empty() && mesh.translucent.is_empty()),
@@ -5325,6 +5328,11 @@ impl Renderer {
             let marked = section.listed(key, sections);
             self.sections
                 .insert_marked(key, section, mesh.bounds, marked);
+        }
+        if allocation_failed {
+            Err(format!("could not allocate GPU storage for section {key:?}").into())
+        } else {
+            Ok(())
         }
     }
     fn upload_mesh(&mut self, mesh: &SectionMesh) -> Option<SectionGpu> {

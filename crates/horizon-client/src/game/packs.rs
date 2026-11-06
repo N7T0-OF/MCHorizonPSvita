@@ -338,7 +338,7 @@ impl Game<'_> {
         } = staged;
         // Keep the working GPU resources, and hand its window surface over.
         if let Some(renderer) = &mut self.renderer {
-            renderer.release_surface();
+            horizon_client::presentation::release_surface(renderer);
         }
         let renderer = match self
             .window
@@ -366,7 +366,7 @@ impl Game<'_> {
             Ok(renderer) => renderer,
             Err(error) => {
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.recreate_surface().map_err(|restore| {
+                    horizon_client::presentation::recreate_surface(renderer).map_err(|restore| {
                         format!(
                             "{error}; could not restore the previous rendering surface: {restore}"
                         )
@@ -461,7 +461,8 @@ impl Game<'_> {
             // The old one's size: a splitscreen player's view is smaller than the window the new
             // one was sized from (it drew a window-sized frame into the view, cut off).
             if let Some(old) = &self.renderer {
-                renderer.resize(old.config.width, old.config.height);
+                let [width, height] = horizon_client::presentation::viewport_size(old);
+                horizon_client::presentation::resize(&mut renderer, width, height);
             }
             self.renderer = Some(renderer);
             self.apply_ui_settings();
