@@ -13,6 +13,7 @@ const BLOCK_HEIGHTS: [i32; 9] = [1, 2, 1, 2, 3, 2, 1, 2, 1];
 const TRIANGLE_VERTICES: [usize; 6] = [0, 1, 2, 0, 2, 3];
 const FACE_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 const MAX_LIGHT_COORD: f32 = 240.0;
+const GX2_VERTEX_SCALARS: usize = 9;
 
 fn atlas_uv(tile_x: u32, tile_y: u32, uv: [f32; 2]) -> [f32; 2] {
     let tile_origin = [
@@ -74,11 +75,16 @@ fn write_gx2_vertex(
         .rgba()
         .map(|component| f32::from(component) / 255.0 * brightness);
     let uv = terrain_vertex.uv();
-    let base = index * 8;
+    let base = index * GX2_VERTEX_SCALARS;
 
     vertices[base..base + 3].copy_from_slice(&projected);
     vertices[base + 3..base + 6].copy_from_slice(&color[..3]);
     vertices[base + 6..base + 8].copy_from_slice(&uv);
+    vertices[base + 8] = if terrain_vertex.layer & 0x8000 == 0 {
+        1.0
+    } else {
+        0.0
+    };
 }
 
 fn append_face(
@@ -200,8 +206,8 @@ pub extern "C" fn horizon_wiiu_build_block_section(
 ///
 /// The source can be `SectionMesh::solid` in Horizon's 24-byte vertex format.
 /// `section_x/y/z` is the section origin relative to the captured camera.
-/// Sprite layers and light are retained in that format but are not sampled by
-/// this bootstrap's single procedural texture shader yet.
+/// Captured UVs are remapped to a compact atlas by the host converter. The
+/// opaque-leaf bit is retained for alpha cutout; packed light modulates color.
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_encode_terrain_quads(
     source: *const TerrainVertex,
@@ -225,7 +231,8 @@ pub extern "C" fn horizon_wiiu_encode_terrain_quads(
     if output_capacity < required_vertices {
         return 0;
     }
-    let Some(output_scalar_count) = (output_capacity as usize).checked_mul(8) else {
+    let Some(output_scalar_count) = (output_capacity as usize).checked_mul(GX2_VERTEX_SCALARS)
+    else {
         return 0;
     };
 
@@ -284,7 +291,7 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 mod tests {
     use super::{
         horizon_wiiu_build_block_section, horizon_wiiu_encode_terrain_quads, terrain_brightness,
-        BLOCK_VERTEX_COUNT, SECTION_VERTEX_COUNT,
+        BLOCK_VERTEX_COUNT, GX2_VERTEX_SCALARS, SECTION_VERTEX_COUNT,
     };
     use horizon_terrain_data::TerrainVertex;
 
@@ -297,7 +304,7 @@ mod tests {
         assert!(source_count > 0);
         assert_eq!(source_count % 4, 0);
 
-        let mut output = [0.0f32; BLOCK_VERTEX_COUNT as usize * 8];
+        let mut output = [0.0f32; BLOCK_VERTEX_COUNT as usize * GX2_VERTEX_SCALARS];
         let output_count = horizon_wiiu_encode_terrain_quads(
             source.as_ptr(),
             source_count,
@@ -318,7 +325,8 @@ mod tests {
         assert_eq!(&output[3..6], &[1.0, 1.0, 1.0]);
         assert_eq!(output[6], 1.0 / 16.0);
         assert_eq!(output[7], 1.0 / 16.0);
-        assert!((output[8] - 0.215).abs() < 0.00001);
+        assert_eq!(output[8], 1.0);
+        assert!((output[9] - 0.215).abs() < 0.00001);
     }
 
     #[test]
@@ -332,7 +340,7 @@ mod tests {
     #[test]
     fn quad_adapter_rejects_partial_quads_and_short_buffers() {
         let source = [TerrainVertex::new([0.0; 3], [0.0; 2], 0, 0, 0); 4];
-        let mut output = [0.0f32; 6 * 8];
+        let mut output = [0.0f32; 6 * GX2_VERTEX_SCALARS];
         assert_eq!(
             horizon_wiiu_encode_terrain_quads(
                 source.as_ptr(),

@@ -10,7 +10,8 @@
 //!
 //! Files: `scene.json` (`Scene`), `sections.json` and `tiles.json` (one `MeshRecord` per mesh,
 //! in order), `sections.bin` and `tiles.bin` (each mesh's solid then translucent
-//! `TerrainVertex`es), `celestial.bin` (the sun and moon `Vertex`es).
+//! `TerrainVertex`es), `sprites.bin` (the current block sprite atlas), and
+//! `celestial.bin` (the sun and moon `Vertex`es).
 use super::{Frame, Renderer, SectionKey};
 use crate::{
     Result,
@@ -28,6 +29,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// CPU copies of the meshes uploaded since capturing was turned on.
@@ -81,6 +83,8 @@ fn copy(mesh: &SectionMesh) -> SectionMesh {
 pub struct Request {
     pub dir: PathBuf,
     pub settings: Settings,
+    /// The built block sprites, in the same layer order as the section meshes.
+    pub sprite_pixels: Arc<Vec<u8>>,
 }
 
 /// The game's settings that change GPU work, as the game applied them to the renderer.
@@ -371,6 +375,7 @@ impl Renderer {
                 .filter(|(key, _)| standing.contains(*key))
                 .map(|(key, mesh)| ([key.x, key.z, i32::from(key.level)], mesh)),
         )?;
+        fs::write(dir.join("sprites.bin"), request.sprite_pixels.as_slice())?;
         fs::write(
             dir.join("celestial.bin"),
             bytemuck::cast_slice::<Vertex, u8>(frame.celestial),
@@ -459,6 +464,7 @@ impl Renderer {
             "sections": sections,
             "tiles": tiles,
             "vertex_bytes": section_bytes + tile_bytes,
+            "sprite_bytes": request.sprite_pixels.len(),
             "shader_pack_left_out": scene.renderer.shader_pack,
         }))
     }

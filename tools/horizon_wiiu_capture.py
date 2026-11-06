@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Convert one Horizon render-capture section to a Wii U C vertex table.
+"""Convert a Horizon render capture into one GX2-ready section and compact atlas.
 
 The desktop capture stores native-endian `TerrainVertex` records. This tool
-decodes their fields on the host and emits C constants so the Wii U compiler
-lays them out in CafeOS's big-endian ABI.
+decodes them on the host, remaps the selected section's sprite layers into a
+small guarded 2D atlas, and emits C constants for the Wii U big-endian ABI.
 """
 
 import argparse
@@ -17,12 +17,69 @@ import sys
 VERTEX_SIZE = 24
 DEFAULT_MAX_VERTICES = 65_536
 MAX_VERTICES = 4_000_000
+MAX_CAPTURE_SPRITES = 256
+UV_STEPS = 32768.0
+SPRITE_BORDER = 1
 
 
 def c_float(value):
     if not math.isfinite(value):
         raise ValueError("capture contains a non-finite terrain position")
     return f"{value.hex()}f"
+
+
+def make_compact_atlas(scene, capture_dir, layers):
+    spec = scene["settings"]["atlas"]
+    sprite_size = spec["sprite_size"]
+    texture_layers = spec["texture_layers"]
+    if (not isinstance(sprite_size, int) or sprite_size < 1
+            or not isinstance(texture_layers, int) or texture_layers < 1):
+        raise ValueError("scene atlas has invalid sprite dimensions")
+    if len(layers) > MAX_CAPTURE_SPRITES:
+        raise ValueError(
+            f"selected section uses {len(layers)} sprites; limit is {MAX_CAPTURE_SPRITES}"
+        )
+    if any(layer >= texture_layers for layer in layers):
+        raise ValueError("selected section refers to a sprite outside the captured atlas")
+
+    pixels = (capture_dir / "sprites.bin").read_bytes()
+    expected_bytes = sprite_size * sprite_size * 4 * texture_layers
+    if len(pixels) != expected_bytes:
+        raise ValueError(f"sprites.bin has {len(pixels)} bytes; atlas describes {expected_bytes}")
+
+    cell_size = sprite_size + 2 * SPRITE_BORDER
+    columns = math.ceil(math.sqrt(len(layers)))
+    rows = math.ceil(len(layers) / columns)
+    width = columns * cell_size
+    height = rows * cell_size
+    compact = bytearray(width * height * 4)
+    layer_map = {layer: index for index, layer in enumerate(layers)}
+    source_layer_bytes = sprite_size * sprite_size * 4
+    for layer, compact_layer in layer_map.items():
+        source_base = layer * source_layer_bytes
+        cell_x = compact_layer % columns
+        cell_y = compact_layer // columns
+        for y in range(-SPRITE_BORDER, sprite_size + SPRITE_BORDER):
+            source_y = min(max(y, 0), sprite_size - 1)
+            for x in range(-SPRITE_BORDER, sprite_size + SPRITE_BORDER):
+                source_x = min(max(x, 0), sprite_size - 1)
+                source = source_base + (source_y * sprite_size + source_x) * 4
+                target_x = cell_x * cell_size + x + SPRITE_BORDER
+                target_y = cell_y * cell_size + y + SPRITE_BORDER
+                target = (target_y * width + target_x) * 4
+                compact[target:target + 4] = pixels[source:source + 4]
+    return layer_map, bytes(compact), width, height, sprite_size
+
+
+def atlas_uv(u_value, v_value, compact_layer, columns, rows, sprite_size):
+    cell_size = sprite_size + 2 * SPRITE_BORDER
+    cell_x = compact_layer % columns
+    cell_y = compact_layer // columns
+    wrapped_u = (u_value / UV_STEPS) % 1.0
+    wrapped_v = (v_value / UV_STEPS) % 1.0
+    u = (cell_x * cell_size + SPRITE_BORDER + 0.5 + wrapped_u * (sprite_size - 1)) / (columns * cell_size)
+    v = (cell_y * cell_size + SPRITE_BORDER + 0.5 + wrapped_v * (sprite_size - 1)) / (rows * cell_size)
+    return min(65535, math.floor(u * UV_STEPS + 0.5)), min(65535, math.floor(v * UV_STEPS + 0.5))
 
 
 def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
@@ -89,7 +146,8 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
 
     endian = "<" if source_endian == "little" else ">"
     vertex_format = struct.Struct(f"{endian}fffHHHHI")
-    rows = []
+    decoded = []
+    layers = set()
     for index in range(vertex_count):
         position_x, position_y, position_z, u, v, layer, light, color = vertex_format.unpack_from(
             data, index * VERTEX_SIZE
@@ -97,12 +155,33 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
         position = (position_x, position_y, position_z)
         if not all(math.isfinite(value) for value in position):
             raise ValueError(f"section {key} vertex {index} has a non-finite position")
-        rows.append(
+        sprite_layer = layer & 0x7FFF
+        layers.add(sprite_layer)
+        decoded.append((position, u, v, layer, light, color, sprite_layer))
+
+    layers = sorted(layers)
+    layer_map, atlas_pixels, atlas_width, atlas_height, sprite_size = make_compact_atlas(
+        scene, capture_dir, layers
+    )
+    columns = math.ceil(math.sqrt(len(layers)))
+    rows = math.ceil(len(layers) / columns)
+    vertex_rows = []
+    for position, u, v, layer, light, color, sprite_layer in decoded:
+        atlas_u, atlas_v = atlas_uv(u, v, layer_map[sprite_layer], columns, rows, sprite_size)
+        # The sprite index is baked into the compact atlas UV. Keep only
+        # Horizon's force-opaque bit for alpha testing in the GX2 shader.
+        layer_flags = layer & 0x8000
+        vertex_rows.append(
             "   {{%s, %s, %s}, {%uu, %uu}, %uu, %uu, 0x%08Xu}," % (
-                *(c_float(value) for value in position), u, v, layer, light, color
+                *(c_float(value) for value in position), atlas_u, atlas_v,
+                layer_flags, light, color
             )
         )
 
+    atlas_rows = [
+        "   " + ", ".join(f"0x{byte:02X}u" for byte in atlas_pixels[offset:offset + 16]) + ","
+        for offset in range(0, len(atlas_pixels), 16)
+    ]
     output.parent.mkdir(parents=True, exist_ok=True)
     contents = "\n".join(
         [
@@ -117,17 +196,30 @@ def convert(capture_dir: Path, output: Path, max_vertices=DEFAULT_MAX_VERTICES,
             '_Static_assert(sizeof(HorizonTerrainVertex) == 24, "TerrainVertex ABI must stay 24 bytes");',
             "",
             "const HorizonTerrainVertex horizon_wiiu_capture_vertices[] = {",
-            *rows,
+            *vertex_rows,
             "};",
             f"const uint32_t horizon_wiiu_capture_vertex_count = {vertex_count}u;",
             "const float horizon_wiiu_capture_section_origin[3] = {",
             f"   {c_float(origin[0])}, {c_float(origin[1])}, {c_float(origin[2])}",
             "};",
+            "const uint8_t horizon_wiiu_capture_atlas_pixels[] = {",
+            *atlas_rows,
+            "};",
+            f"const uint32_t horizon_wiiu_capture_atlas_width = {atlas_width}u;",
+            f"const uint32_t horizon_wiiu_capture_atlas_height = {atlas_height}u;",
             "",
         ]
     )
     output.write_text(contents, encoding="ascii", newline="\n")
-    return {"key": key, "vertices": vertex_count, "origin": origin, "output": output}
+    return {
+        "key": key,
+        "vertices": vertex_count,
+        "origin": origin,
+        "layers": layers,
+        "atlas_size": (atlas_width, atlas_height),
+        "atlas_pixels": atlas_pixels,
+        "output": output,
+    }
 
 
 def main(argv=None):
@@ -142,8 +234,10 @@ def main(argv=None):
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         parser.error(str(error))
     print(
-        f"selected section {result['key']}: {result['vertices']} solid vertices, "
-        f"camera-relative origin {result['origin']} -> {result['output']}"
+        f"selected section {result['key']}: {result['vertices']} solid vertices from "
+        f"{len(result['layers'])} sprite layers, compact atlas "
+        f"{result['atlas_size'][0]}x{result['atlas_size'][1]}, camera-relative origin "
+        f"{result['origin']} -> {result['output']}"
     )
     return 0
 

@@ -477,6 +477,7 @@ impl Game<'_> {
                     r.capture = Some(horizon_client::gfx::capture::Request {
                         dir: dir.trim().into(),
                         settings,
+                        sprite_pixels: self.pack.render.pixels.get(),
                     });
                     self.pending_render_capture = Some(reply.clone());
                     Ok(None)

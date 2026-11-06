@@ -27,6 +27,7 @@ typedef struct Vertex {
    float position[3];
    float color[3];
    float uv[2];
+   float alphaCutout;
 } Vertex;
 
 typedef struct HorizonTerrainVertex {
@@ -55,6 +56,9 @@ extern uint32_t horizon_wiiu_encode_terrain_quads(const HorizonTerrainVertex *so
 extern const HorizonTerrainVertex horizon_wiiu_capture_vertices[];
 extern const uint32_t horizon_wiiu_capture_vertex_count;
 extern const float horizon_wiiu_capture_section_origin[3];
+extern const uint8_t horizon_wiiu_capture_atlas_pixels[];
+extern const uint32_t horizon_wiiu_capture_atlas_width;
+extern const uint32_t horizon_wiiu_capture_atlas_height;
 #endif
 
 static WHBGfxShaderGroup sBlockShader;
@@ -62,6 +66,8 @@ static GX2RBuffer sBlockBuffer;
 static GX2Texture sBlockAtlas;
 static GX2Sampler sBlockSampler;
 static const HorizonTerrainVertex *sBlockSection;
+static uint32_t sAtlasWidth;
+static uint32_t sAtlasHeight;
 #ifndef HORIZON_WIIU_CAPTURE
 static HorizonTerrainVertex sFixtureSection[SECTION_VERTEX_COUNT];
 #endif
@@ -90,8 +96,17 @@ init_block_atlas(void)
    memset(&sBlockAtlas, 0, sizeof(sBlockAtlas));
    sBlockAtlas.surface.use = GX2_SURFACE_USE_TEXTURE;
    sBlockAtlas.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
-   sBlockAtlas.surface.width = ATLAS_SIZE;
-   sBlockAtlas.surface.height = ATLAS_SIZE;
+   sAtlasWidth = ATLAS_SIZE;
+   sAtlasHeight = ATLAS_SIZE;
+#ifdef HORIZON_WIIU_CAPTURE
+   sAtlasWidth = horizon_wiiu_capture_atlas_width;
+   sAtlasHeight = horizon_wiiu_capture_atlas_height;
+   if (sAtlasWidth == 0 || sAtlasHeight == 0) {
+      return FALSE;
+   }
+#endif
+   sBlockAtlas.surface.width = sAtlasWidth;
+   sBlockAtlas.surface.height = sAtlasHeight;
    sBlockAtlas.surface.depth = 1;
    sBlockAtlas.surface.mipLevels = 1;
    sBlockAtlas.surface.format = GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8;
@@ -117,6 +132,13 @@ init_block_atlas(void)
    }
 
    const uint32_t pitch = sBlockAtlas.surface.pitch;
+#ifdef HORIZON_WIIU_CAPTURE
+   for (uint32_t y = 0; y < sAtlasHeight; ++y) {
+      memcpy(pixels + (y * pitch * 4),
+             horizon_wiiu_capture_atlas_pixels + (y * sAtlasWidth * 4),
+             sAtlasWidth * 4);
+   }
+#else
    for (uint32_t y = 0; y < ATLAS_SIZE; ++y) {
       for (uint32_t x = 0; x < ATLAS_SIZE; ++x) {
          const uint32_t tileX = x / ATLAS_TILE_SIZE;
@@ -153,6 +175,7 @@ init_block_atlas(void)
          set_atlas_pixel(pixels, pitch, x, y, red, green, blue);
       }
    }
+#endif
 
    GX2RUnlockSurfaceEx(&sBlockAtlas.surface, 0, textureFlags);
    GX2InitTextureRegs(&sBlockAtlas);
@@ -173,6 +196,8 @@ init_block_mesh(void)
                                      offsetof(Vertex, color), GX2_ATTRIB_FORMAT_FLOAT_32_32_32)
        || !WHBGfxInitShaderAttribute(&sBlockShader, "aUv", 0,
                                      offsetof(Vertex, uv), GX2_ATTRIB_FORMAT_FLOAT_32_32)
+       || !WHBGfxInitShaderAttribute(&sBlockShader, "aAlphaCutout", 0,
+                                     offsetof(Vertex, alphaCutout), GX2_ATTRIB_FORMAT_FLOAT_32)
        || !WHBGfxInitFetchShader(&sBlockShader)) {
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
