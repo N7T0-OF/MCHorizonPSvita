@@ -4,7 +4,11 @@ use core::panic::PanicInfo;
 use core::ptr;
 use horizon_core::position::BlockPos;
 
-const BLOCK_VERTEX_COUNT: u32 = 18;
+const BLOCK_VERTEX_COUNT: u32 = 414;
+const BASE_Y: i32 = 64;
+const BLOCK_HEIGHTS: [i32; 9] = [1, 2, 1, 2, 3, 2, 1, 2, 1];
+const TRIANGLE_VERTICES: [usize; 6] = [0, 1, 2, 0, 2, 3];
+const FACE_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
 fn atlas_uv(tile_x: u32, tile_y: u32, uv: [f32; 2]) -> [f32; 2] {
     let tile_origin = [
@@ -17,76 +21,174 @@ fn atlas_uv(tile_x: u32, tile_y: u32, uv: [f32; 2]) -> [f32; 2] {
     ]
 }
 
-/// Fills a projected three-face block mesh using Horizon's vanilla BlockPos.
-/// The mesh is deliberately a small GX2 smoke test, not Horizon world output.
+fn write_vertex(
+    vertices: *mut f32,
+    index: usize,
+    position: BlockPos,
+    uv: [f32; 2],
+    color: [f32; 3],
+    camera_x: f32,
+    camera_z: f32,
+) {
+    let x = position.x as f32 - camera_x;
+    let y = (position.y - BASE_Y) as f32;
+    let z = position.z as f32 - camera_z;
+    // Dimetric projection keeps the test world inside clip space and makes
+    // horizontal GamePad movement easy to see without a matrix dependency.
+    let projected = [
+        (x - z) * 0.215,
+        (x + z) * 0.10 - y * 0.25 + 0.40,
+        0.5 + (x + z) * 0.015 - y * 0.025,
+    ];
+    let base = index * 8;
+
+    // SAFETY: the exported mesh builder validates capacity before writing;
+    // the caller provides space for the fixed heightmap's 414-vertex maximum.
+    unsafe {
+        ptr::copy_nonoverlapping(projected.as_ptr(), vertices.add(base), 3);
+        ptr::copy_nonoverlapping(color.as_ptr(), vertices.add(base + 3), 3);
+        ptr::copy_nonoverlapping(uv.as_ptr(), vertices.add(base + 6), 2);
+    }
+}
+
+fn append_face(
+    vertices: *mut f32,
+    first_vertex: usize,
+    corners: [BlockPos; 4],
+    tile: (u32, u32),
+    color: [f32; 3],
+    camera_x: f32,
+    camera_z: f32,
+) -> usize {
+    for (vertex_offset, corner_index) in TRIANGLE_VERTICES.into_iter().enumerate() {
+        let uv = atlas_uv(tile.0, tile.1, FACE_UVS[corner_index]);
+        write_vertex(
+            vertices,
+            first_vertex + vertex_offset,
+            corners[corner_index],
+            uv,
+            color,
+            camera_x,
+            camera_z,
+        );
+    }
+    first_vertex + TRIANGLE_VERTICES.len()
+}
+
+fn column_height(x: i32, z: i32) -> i32 {
+    if !(-1..=1).contains(&x) || !(-1..=1).contains(&z) {
+        return 0;
+    }
+    BLOCK_HEIGHTS[((z + 1) * 3 + (x + 1)) as usize]
+}
+
+fn append_column(
+    vertices: *mut f32,
+    first_vertex: usize,
+    x: i32,
+    z: i32,
+    height: i32,
+    camera_x: f32,
+    camera_z: f32,
+) -> usize {
+    let mut next = first_vertex;
+
+    for level in 0..height {
+        let origin = BlockPos::new(x, BASE_Y + level, z);
+        let x0y0z0 = origin;
+        let x1y0z0 = origin.offset(1, 0, 0);
+        let x0y0z1 = origin.offset(0, 0, 1);
+        let x1y0z1 = origin.offset(1, 0, 1);
+        let x0y1z0 = origin.offset(0, 1, 0);
+        let x1y1z0 = origin.offset(1, 1, 0);
+        let x0y1z1 = origin.offset(0, 1, 1);
+        let x1y1z1 = origin.offset(1, 1, 1);
+
+        if level == height - 1 {
+            next = append_face(
+                vertices,
+                next,
+                [x0y1z0, x1y1z0, x1y1z1, x0y1z1],
+                (0, 0),
+                [1.0, 1.0, 1.0],
+                camera_x,
+                camera_z,
+            );
+        }
+        if level >= column_height(x + 1, z) {
+            next = append_face(
+                vertices,
+                next,
+                [x1y1z0, x1y0z0, x1y0z1, x1y1z1],
+                (1, 0),
+                [0.96, 0.96, 0.96],
+                camera_x,
+                camera_z,
+            );
+        }
+        if level >= column_height(x, z + 1) {
+            next = append_face(
+                vertices,
+                next,
+                [x0y1z1, x1y1z1, x1y0z1, x0y0z1],
+                (1, 0),
+                [0.82, 0.82, 0.82],
+                camera_x,
+                camera_z,
+            );
+        }
+        if level >= column_height(x - 1, z) {
+            next = append_face(
+                vertices,
+                next,
+                [x0y1z0, x0y1z1, x0y0z1, x0y0z0],
+                (1, 0),
+                [0.82, 0.82, 0.82],
+                camera_x,
+                camera_z,
+            );
+        }
+        if level >= column_height(x, z - 1) {
+            next = append_face(
+                vertices,
+                next,
+                [x1y1z0, x0y1z0, x0y0z0, x1y0z0],
+                (1, 0),
+                [0.68, 0.68, 0.68],
+                camera_x,
+                camera_z,
+            );
+        }
+    }
+    next
+}
+
+/// Fills a small Horizon-positioned block landscape for the GX2 renderer.
+///
+/// The fixed 3x3 heightmap is an integration fixture. Each vertex is produced
+/// from Horizon's real BlockPos type and then projected for GX2 clip space.
 #[unsafe(no_mangle)]
-pub extern "C" fn horizon_wiiu_build_block_mesh(vertices: *mut f32, capacity: u32) -> u32 {
+pub extern "C" fn horizon_wiiu_build_block_mesh(
+    vertices: *mut f32,
+    capacity: u32,
+    camera_x: f32,
+    camera_z: f32,
+) -> u32 {
     if vertices.is_null() || capacity < BLOCK_VERTEX_COUNT {
         return 0;
     }
 
-    let origin = BlockPos::new(0, 64, 0);
-    let top = origin.offset(0, 1, 0);
-    let x_top = origin.offset(1, 1, 0);
-    let z_top = origin.offset(0, 1, 1);
-    let far_top = origin.offset(1, 1, 1);
-    let x_bottom = origin.offset(1, 0, 0);
-    let z_bottom = origin.offset(0, 0, 1);
-    let color_top = [1.0, 1.0, 1.0];
-    let color_x = [0.96, 0.96, 0.96];
-    let color_z = [0.82, 0.82, 0.82];
-
-    // Each face is two triangles. The top and two visible sides form a simple
-    // isometric block while keeping depth-buffer setup separate from this first
-    // Horizon-data-to-GX2 vertex path.
-    let mesh = [
-        (top, color_top, atlas_uv(0, 0, [0.0, 0.0])),
-        (x_top, color_top, atlas_uv(0, 0, [1.0, 0.0])),
-        (far_top, color_top, atlas_uv(0, 0, [1.0, 1.0])),
-        (top, color_top, atlas_uv(0, 0, [0.0, 0.0])),
-        (far_top, color_top, atlas_uv(0, 0, [1.0, 1.0])),
-        (z_top, color_top, atlas_uv(0, 0, [0.0, 1.0])),
-        (top, color_x, atlas_uv(1, 0, [0.0, 0.0])),
-        (x_top, color_x, atlas_uv(1, 0, [1.0, 0.0])),
-        (x_bottom, color_x, atlas_uv(1, 0, [1.0, 1.0])),
-        (top, color_x, atlas_uv(1, 0, [0.0, 0.0])),
-        (x_bottom, color_x, atlas_uv(1, 0, [1.0, 1.0])),
-        (origin, color_x, atlas_uv(1, 0, [0.0, 1.0])),
-        (top, color_z, atlas_uv(1, 0, [0.0, 0.0])),
-        (z_top, color_z, atlas_uv(1, 0, [1.0, 0.0])),
-        (z_bottom, color_z, atlas_uv(1, 0, [1.0, 1.0])),
-        (top, color_z, atlas_uv(1, 0, [0.0, 0.0])),
-        (z_bottom, color_z, atlas_uv(1, 0, [1.0, 1.0])),
-        (origin, color_z, atlas_uv(1, 0, [0.0, 1.0])),
-    ];
-
-    for (index, (position, color, uv)) in mesh.into_iter().enumerate() {
-        let x = position.x - origin.x;
-        let y = position.y - origin.y;
-        let z = position.z - origin.z;
-        // Dimetric projection onto the GX2 shader's clip-space input.
-        let projected = [
-            (x - z) as f32 * 0.43,
-            (x + z) as f32 * 0.20 - y as f32 * 0.50 + 0.05,
-            0.5 + (x + z) as f32 * 0.04 - y as f32 * 0.04,
-        ];
-        let base = index * 8;
-        // SAFETY: the caller promises a writable array of at least 18 vertices;
-        // each vertex occupies eight f32 values and capacity was checked above.
-        unsafe {
-            ptr::copy_nonoverlapping(projected.as_ptr(), vertices.add(base), 3);
-            ptr::copy_nonoverlapping(color.as_ptr(), vertices.add(base + 3), 3);
-            ptr::copy_nonoverlapping(uv.as_ptr(), vertices.add(base + 6), 2);
-        }
+    let mut next_vertex = 0;
+    for (column, height) in BLOCK_HEIGHTS.into_iter().enumerate() {
+        let x = column as i32 % 3 - 1;
+        let z = column as i32 / 3 - 1;
+        next_vertex = append_column(vertices, next_vertex, x, z, height, camera_x, camera_z);
     }
 
-    BLOCK_VERTEX_COUNT
+    next_vertex as u32
 }
 
 /// Supplies the CafeOS frame clear color to the WUT presentation loop.
-///
-/// The cycling teal makes it clear that the WUT presentation loop is calling
-/// Rust every frame while the block mesh remains static.
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_frame_color(frame: u32, rgba: *mut f32) {
     if rgba.is_null() {

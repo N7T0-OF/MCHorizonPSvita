@@ -11,14 +11,16 @@
 #include <gx2r/buffer.h>
 #include <gx2r/draw.h>
 #include <gx2r/surface.h>
+#include <vpad/input.h>
 #include <whb/gfx.h>
 #include <whb/proc.h>
 
 extern void horizon_wiiu_frame_color(uint32_t frame, float rgba[4]);
-extern uint32_t horizon_wiiu_build_block_mesh(float *vertices, uint32_t capacity);
+extern uint32_t horizon_wiiu_build_block_mesh(float *vertices, uint32_t capacity,
+                                               float camera_x, float camera_z);
 extern const uint8_t _binary_horizon_block_gsh_start[];
 
-#define BLOCK_VERTEX_COUNT 18
+#define BLOCK_VERTEX_COUNT 414
 #define ATLAS_TILE_SIZE 4
 #define ATLAS_SIZE (ATLAS_TILE_SIZE * 2)
 
@@ -32,6 +34,10 @@ static WHBGfxShaderGroup sBlockShader;
 static GX2RBuffer sBlockBuffer;
 static GX2Texture sBlockAtlas;
 static GX2Sampler sBlockSampler;
+static uint32_t sBlockVertexCount;
+static float sCameraX;
+static float sCameraZ;
+static BOOL sBlockMeshDirty = TRUE;
 
 static void
 set_atlas_pixel(uint8_t *pixels, uint32_t pitch, uint32_t x, uint32_t y,
@@ -150,20 +156,67 @@ init_block_mesh(void)
       return FALSE;
    }
 
+   return TRUE;
+}
+
+static void
+update_camera(void)
+{
+   const float previousCameraX = sCameraX;
+   const float previousCameraZ = sCameraZ;
+   VPADStatus status;
+   VPADReadError error = VPAD_READ_SUCCESS;
+   if (VPADRead(VPAD_CHAN_0, &status, 1, &error) <= 0 || error != VPAD_READ_SUCCESS) {
+      return;
+   }
+
+   const float deadzone = 0.12f;
+   if (status.leftStick.x > deadzone || status.leftStick.x < -deadzone) {
+      sCameraX += status.leftStick.x * 0.025f;
+   }
+   if (status.leftStick.y > deadzone || status.leftStick.y < -deadzone) {
+      sCameraZ -= status.leftStick.y * 0.025f;
+   }
+   if (status.hold & VPAD_BUTTON_LEFT) {
+      sCameraX -= 0.025f;
+   }
+   if (status.hold & VPAD_BUTTON_RIGHT) {
+      sCameraX += 0.025f;
+   }
+   if (status.hold & VPAD_BUTTON_UP) {
+      sCameraZ += 0.025f;
+   }
+   if (status.hold & VPAD_BUTTON_DOWN) {
+      sCameraZ -= 0.025f;
+   }
+
+   if (sCameraX < -4.0f) sCameraX = -4.0f;
+   if (sCameraX > 4.0f) sCameraX = 4.0f;
+   if (sCameraZ < -4.0f) sCameraZ = -4.0f;
+   if (sCameraZ > 4.0f) sCameraZ = 4.0f;
+   if (sCameraX != previousCameraX || sCameraZ != previousCameraZ) {
+      sBlockMeshDirty = TRUE;
+   }
+}
+
+static BOOL
+update_block_mesh(void)
+{
    void *buffer = GX2RLockBufferEx(&sBlockBuffer, 0);
    if (!buffer) {
-      GX2RDestroyBufferEx(&sBlockBuffer, sBlockBuffer.flags);
-      WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
    }
 
-   uint32_t vertexCount = horizon_wiiu_build_block_mesh((float *)buffer, BLOCK_VERTEX_COUNT);
+   uint32_t vertexCount = horizon_wiiu_build_block_mesh((float *)buffer,
+                                                         BLOCK_VERTEX_COUNT,
+                                                         sCameraX,
+                                                         sCameraZ);
    GX2RUnlockBufferEx(&sBlockBuffer, 0);
-   if (vertexCount != BLOCK_VERTEX_COUNT) {
-      GX2RDestroyBufferEx(&sBlockBuffer, sBlockBuffer.flags);
-      WHBGfxFreeShaderGroup(&sBlockShader);
+   if (vertexCount == 0 || vertexCount > BLOCK_VERTEX_COUNT) {
       return FALSE;
    }
+
+   sBlockVertexCount = vertexCount;
    return TRUE;
 }
 
@@ -189,7 +242,7 @@ draw_block_mesh(void)
    GX2SetPixelTexture(&sBlockAtlas, 0);
    GX2SetPixelSampler(&sBlockSampler, 0);
    GX2SetDepthOnlyControl(TRUE, TRUE, GX2_COMPARE_FUNC_LEQUAL);
-   GX2DrawEx(GX2_PRIMITIVE_MODE_TRIANGLES, BLOCK_VERTEX_COUNT, 0, 1);
+   GX2DrawEx(GX2_PRIMITIVE_MODE_TRIANGLES, sBlockVertexCount, 0, 1);
 }
 
 static void
@@ -230,16 +283,21 @@ main(int argc, char **argv)
    while (WHBProcIsRunning()) {
       float rgba[4];
       horizon_wiiu_frame_color(frame++, rgba);
+      update_camera();
+      if (sBlockMeshDirty && update_block_mesh()) {
+         sBlockMeshDirty = FALSE;
+      }
+      const BOOL hasMesh = sBlockVertexCount != 0;
 
       WHBGfxBeginRender();
       WHBGfxBeginRenderTV();
       WHBGfxClearColor(rgba[0], rgba[1], rgba[2], rgba[3]);
-      draw_block_mesh();
+      if (hasMesh) draw_block_mesh();
       WHBGfxFinishRenderTV();
 
       WHBGfxBeginRenderDRC();
       WHBGfxClearColor(rgba[0], rgba[1], rgba[2], rgba[3]);
-      draw_block_mesh();
+      if (hasMesh) draw_block_mesh();
       WHBGfxFinishRenderDRC();
       WHBGfxFinishRender();
    }
