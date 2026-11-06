@@ -335,6 +335,22 @@ fn copy_error(error: &str, output: *mut c_char, capacity: u32) {
     }
 }
 
+fn generate_chunk_mesh(
+    context: &mut WorldContext,
+    chunk_x: i32,
+    chunk_z: i32,
+) -> Result<(Box<[TerrainVertex]>, [i16; COLUMN_COUNT]), String> {
+    let position = horizon_core::position::ChunkPos::new(chunk_x, chunk_z);
+    write_status(&format!("chunk generation started: {chunk_x},{chunk_z}\n"));
+    let proto = context
+        .generator
+        .worker()
+        .generate_proto(position)
+        .map_err(|error| format!("Horizon chunk generation: {error}"))?;
+    write_status("proto-chunk generated\n");
+    mesh_chunk(&proto, &context.opaque, &context.materials)
+}
+
 /// Load Horizon's prepared 26.3 block registry and terrain generator.
 ///
 /// `resources` points at a prepared client resource directory containing
@@ -410,21 +426,7 @@ pub extern "C" fn horizon_wiiu_world_generate_chunk(
         );
         return ptr::null_mut();
     };
-    let position = horizon_core::position::ChunkPos::new(chunk_x, chunk_z);
-    write_status(&format!("chunk generation started: {chunk_x},{chunk_z}\n"));
-    let proto = match context.generator.worker().generate_proto(position) {
-        Ok(chunk) => chunk,
-        Err(error) => {
-            copy_error(
-                &format!("Horizon chunk generation: {error}"),
-                error_out,
-                error_capacity,
-            );
-            return ptr::null_mut();
-        }
-    };
-    write_status("proto-chunk generated\n");
-    let (vertices, heights) = match mesh_chunk(&proto, &context.opaque, &context.materials) {
+    let (vertices, heights) = match generate_chunk_mesh(context, chunk_x, chunk_z) {
         Ok(mesh) => mesh,
         Err(error) => {
             copy_error(&error, error_out, error_capacity);
@@ -446,6 +448,92 @@ pub extern "C" fn horizon_wiiu_world_generate_chunk(
     .cast::<c_void>()
 }
 
+/// Generate a bounded square of Horizon proto-chunks and combine their meshes.
+/// Vertices are region-relative; the returned chunk position is the region origin.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_generate_region(
+    center_x: i32,
+    center_z: i32,
+    radius: u32,
+    error_out: *mut c_char,
+    error_capacity: u32,
+) -> *mut c_void {
+    if radius > 1 {
+        copy_error("Horizon region radius exceeds 1", error_out, error_capacity);
+        return ptr::null_mut();
+    }
+    let radius = radius as i32;
+    let Some(origin_x) = center_x.checked_sub(radius) else {
+        copy_error("Horizon region x range overflow", error_out, error_capacity);
+        return ptr::null_mut();
+    };
+    let Some(origin_z) = center_z.checked_sub(radius) else {
+        copy_error("Horizon region z range overflow", error_out, error_capacity);
+        return ptr::null_mut();
+    };
+    let Some(end_x) = center_x.checked_add(radius) else {
+        copy_error("Horizon region x range overflow", error_out, error_capacity);
+        return ptr::null_mut();
+    };
+    let Some(end_z) = center_z.checked_add(radius) else {
+        copy_error("Horizon region z range overflow", error_out, error_capacity);
+        return ptr::null_mut();
+    };
+
+    let mut loaded = world()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(context) = loaded.as_mut() else {
+        copy_error(
+            "Horizon world is not initialized",
+            error_out,
+            error_capacity,
+        );
+        return ptr::null_mut();
+    };
+
+    let side = (radius * 2 + 1) as usize;
+    let mut vertices = Vec::new();
+    let mut heights = [0i16; COLUMN_COUNT];
+    for chunk_z in origin_z..=end_z {
+        for chunk_x in origin_x..=end_x {
+            let (chunk_vertices, chunk_heights) =
+                match generate_chunk_mesh(context, chunk_x, chunk_z) {
+                    Ok(mesh) => mesh,
+                    Err(error) => {
+                        copy_error(&error, error_out, error_capacity);
+                        return ptr::null_mut();
+                    }
+                };
+            if chunk_x == center_x && chunk_z == center_z {
+                heights = chunk_heights;
+            }
+            let offset_x = ((chunk_x - origin_x) * 16) as f32;
+            let offset_z = ((chunk_z - origin_z) * 16) as f32;
+            let mut chunk_vertices = Vec::from(chunk_vertices);
+            for vertex in &mut chunk_vertices {
+                vertex.pos[0] += offset_x;
+                vertex.pos[2] += offset_z;
+            }
+            vertices.append(&mut chunk_vertices);
+        }
+    }
+    let min_height = heights.iter().min().copied().unwrap_or_default();
+    let max_height = heights.iter().max().copied().unwrap_or_default();
+    write_status(&format!(
+        "region meshed: center={center_x},{center_z} chunks={} vertices={} surface_y={min_height}..{max_height}\n",
+        side * side,
+        vertices.len()
+    ));
+    Box::into_raw(Box::new(WorldChunk {
+        vertices: vertices.into_boxed_slice(),
+        heights,
+        chunk_x: origin_x,
+        chunk_z: origin_z,
+    }))
+    .cast::<c_void>()
+}
+
 /// Borrow the generated chunk's Horizon vertex array until `free_chunk`.
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_world_chunk_vertices(
@@ -455,7 +543,7 @@ pub extern "C" fn horizon_wiiu_world_chunk_vertices(
     if chunk.is_null() || vertex_count_out.is_null() {
         return ptr::null();
     }
-    // SAFETY: `chunk` came from `horizon_wiiu_world_generate_chunk` and remains live.
+    // SAFETY: `chunk` came from a world chunk/region function and remains live.
     let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
     let Ok(vertex_count) = u32::try_from(chunk.vertices.len()) else {
         return ptr::null();
@@ -475,7 +563,7 @@ pub extern "C" fn horizon_wiiu_world_chunk_heights(
     if chunk.is_null() || heights_out.is_null() || capacity < COLUMN_COUNT as u32 {
         return 0;
     }
-    // SAFETY: `chunk` came from `horizon_wiiu_world_generate_chunk` and remains live.
+    // SAFETY: `chunk` came from a world chunk/region function and remains live.
     let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
     // SAFETY: C supplies 256 writable height entries after the capacity check.
     unsafe { ptr::copy_nonoverlapping(chunk.heights.as_ptr(), heights_out, COLUMN_COUNT) };
@@ -488,7 +576,7 @@ pub extern "C" fn horizon_wiiu_world_chunk_position(chunk: *const c_void, output
     if chunk.is_null() || output.is_null() {
         return 0;
     }
-    // SAFETY: `chunk` came from `horizon_wiiu_world_generate_chunk` and remains live.
+    // SAFETY: `chunk` came from a world chunk/region function and remains live.
     let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
     // SAFETY: C provides two writable i32 values.
     unsafe {
@@ -502,7 +590,7 @@ pub extern "C" fn horizon_wiiu_world_chunk_position(chunk: *const c_void, output
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_world_free_chunk(chunk: *mut c_void) {
     if !chunk.is_null() {
-        // SAFETY: `chunk` was returned by `horizon_wiiu_world_generate_chunk` once.
+        // SAFETY: `chunk` was returned by a world chunk/region function once.
         unsafe { drop(Box::from_raw(chunk.cast::<WorldChunk>())) };
     }
 }

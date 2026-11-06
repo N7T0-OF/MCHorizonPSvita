@@ -25,6 +25,8 @@ extern const uint8_t _binary_horizon_block_gsh_start[];
 #define ATLAS_TILE_SIZE 4
 #define ATLAS_SIZE (ATLAS_TILE_SIZE * 2)
 #define HORIZON_WIIU_WORLD_PROFILE_SUPERFLAT 1
+#define HORIZON_WIIU_WORLD_REGION_RADIUS 1
+#define HORIZON_WIIU_WORLD_REGION_DIAMETER ((HORIZON_WIIU_WORLD_REGION_RADIUS * 2 + 1) * 16)
 
 typedef struct Vertex {
    float position[4];
@@ -67,12 +69,14 @@ extern void horizon_wiiu_camera_motion(float yaw_degrees,
 extern int32_t horizon_wiiu_world_init(const char *resources, int64_t seed,
                                         uint32_t profile, int32_t spawn[2], char *error,
                                         uint32_t errorCapacity);
-extern void *horizon_wiiu_world_generate_chunk(int32_t chunkX, int32_t chunkZ,
-                                               char *error, uint32_t errorCapacity);
+extern void *horizon_wiiu_world_generate_region(int32_t centerX, int32_t centerZ,
+                                                 uint32_t radius, char *error,
+                                                 uint32_t errorCapacity);
 extern const HorizonTerrainVertex *horizon_wiiu_world_chunk_vertices(
    const void *chunk, uint32_t *vertexCount);
 extern int32_t horizon_wiiu_world_chunk_heights(const void *chunk, int16_t *heights,
                                                 uint32_t capacity);
+extern int32_t horizon_wiiu_world_chunk_position(const void *chunk, int32_t output[2]);
 extern void horizon_wiiu_world_free_chunk(void *chunk);
 #define HORIZON_WIIU_RESOURCE_PATH "/vol/external01/wiiu/apps/HorizonWiiU/resources/26.3"
 #endif
@@ -328,16 +332,28 @@ init_block_mesh(void)
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
    }
-   const int32_t chunkX = spawn[0] / 16 - (spawn[0] < 0 && spawn[0] % 16 != 0);
-   const int32_t chunkZ = spawn[1] / 16 - (spawn[1] < 0 && spawn[1] % 16 != 0);
-   sRuntimeWorldChunk = horizon_wiiu_world_generate_chunk(
-      chunkX, chunkZ, error, sizeof(error));
+   const int32_t centerChunkX = spawn[0] / 16 - (spawn[0] < 0 && spawn[0] % 16 != 0);
+   const int32_t centerChunkZ = spawn[1] / 16 - (spawn[1] < 0 && spawn[1] % 16 != 0);
+   sRuntimeWorldChunk = horizon_wiiu_world_generate_region(
+      centerChunkX, centerChunkZ, HORIZON_WIIU_WORLD_REGION_RADIUS,
+      error, sizeof(error));
    if (!sRuntimeWorldChunk) {
 #ifdef HORIZON_WIIU_WORLDGEN
       sBlockInitFailure = 4;
 #endif
       OSReport("HorizonWiiU: Horizon chunk (%d,%d) failed: %s\n",
-               chunkX, chunkZ, error);
+               centerChunkX, centerChunkZ, error);
+      WHBGfxFreeShaderGroup(&sBlockShader);
+      return FALSE;
+   }
+   int32_t regionOrigin[2] = {0, 0};
+   if (!horizon_wiiu_world_chunk_position(sRuntimeWorldChunk, regionOrigin)) {
+#ifdef HORIZON_WIIU_WORLDGEN
+      sBlockInitFailure = 6;
+#endif
+      OSReport("HorizonWiiU: could not read generated Horizon region origin\n");
+      horizon_wiiu_world_free_chunk(sRuntimeWorldChunk);
+      sRuntimeWorldChunk = NULL;
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
    }
@@ -357,17 +373,17 @@ init_block_mesh(void)
       return FALSE;
    }
    sBlockOutputCapacity = sBlockSectionVertexCount / 4 * 6;
-   sSectionOrigin[0] = (float)(chunkX * 16);
+   sSectionOrigin[0] = (float)(regionOrigin[0] * 16);
    sSectionOrigin[1] = 0.0f;
-   sSectionOrigin[2] = (float)(chunkZ * 16);
+   sSectionOrigin[2] = (float)(regionOrigin[1] * 16);
    sCameraX = (float)spawn[0] + 0.5f;
    sCameraZ = (float)spawn[1] + 0.5f;
-   const uint32_t localX = (uint32_t)(spawn[0] - chunkX * 16);
-   const uint32_t localZ = (uint32_t)(spawn[1] - chunkZ * 16);
+   const uint32_t localX = (uint32_t)(spawn[0] - centerChunkX * 16);
+   const uint32_t localZ = (uint32_t)(spawn[1] - centerChunkZ * 16);
    sCameraY = (float)sGroundHeights[localZ * 16 + localX] + 1.62f;
    sCameraPitch = 8.0f;
-   OSReport("HorizonWiiU: generated Horizon 26.3 chunk (%d,%d), %u vertices, spawn (%d,%d)\n",
-            chunkX, chunkZ, sBlockSectionVertexCount, spawn[0], spawn[1]);
+   OSReport("HorizonWiiU: generated Horizon region at (%d,%d), %u vertices, spawn (%d,%d)\n",
+            regionOrigin[0], regionOrigin[1], sBlockSectionVertexCount, spawn[0], spawn[1]);
 #else
    sBlockSection = sRuntimeChunk;
    sSectionOrigin[0] = 0.0f;
@@ -395,7 +411,7 @@ init_block_mesh(void)
 
    if (sBlockOutputCapacity == 0 || sBlockOutputCapacity > UINT32_MAX / sizeof(Vertex)) {
 #ifdef HORIZON_WIIU_WORLDGEN
-      sBlockInitFailure = 6;
+      sBlockInitFailure = 7;
 #endif
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
@@ -410,7 +426,7 @@ init_block_mesh(void)
 
    if (!GX2RCreateBuffer(&sBlockBuffer)) {
 #ifdef HORIZON_WIIU_WORLDGEN
-      sBlockInitFailure = 7;
+      sBlockInitFailure = 8;
 #endif
       WHBGfxFreeShaderGroup(&sBlockShader);
       return FALSE;
@@ -477,13 +493,14 @@ update_camera(void)
    if (sCameraZ > 4.0f) sCameraZ = 4.0f;
 #else
 #ifdef HORIZON_WIIU_WORLDGEN
-   if (sCameraX < sSectionOrigin[0] + 0.5f) sCameraX = sSectionOrigin[0] + 0.5f;
-   if (sCameraX > sSectionOrigin[0] + 15.5f) sCameraX = sSectionOrigin[0] + 15.5f;
-   if (sCameraZ < sSectionOrigin[2] + 0.5f) sCameraZ = sSectionOrigin[2] + 0.5f;
-   if (sCameraZ > sSectionOrigin[2] + 15.5f) sCameraZ = sSectionOrigin[2] + 15.5f;
-   const int32_t localX = (int32_t)(sCameraX - sSectionOrigin[0]);
-   const int32_t localZ = (int32_t)(sCameraZ - sSectionOrigin[2]);
-   sCameraY = (float)sGroundHeights[localZ * 16 + localX] + 1.62f;
+   const float minX = sSectionOrigin[0] + 0.5f;
+   const float maxX = sSectionOrigin[0] + HORIZON_WIIU_WORLD_REGION_DIAMETER - 0.5f;
+   const float minZ = sSectionOrigin[2] + 0.5f;
+   const float maxZ = sSectionOrigin[2] + HORIZON_WIIU_WORLD_REGION_DIAMETER - 0.5f;
+   if (sCameraX < minX) sCameraX = minX;
+   if (sCameraX > maxX) sCameraX = maxX;
+   if (sCameraZ < minZ) sCameraZ = minZ;
+   if (sCameraZ > maxZ) sCameraZ = maxZ;
 #else
    if (sCameraX < -15.5f) sCameraX = -15.5f;
    if (sCameraX > -0.5f) sCameraX = -0.5f;
