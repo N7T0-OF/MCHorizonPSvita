@@ -85,15 +85,26 @@ fn main() {
     let min_height = heights.iter().min().copied().unwrap_or_default();
     let max_height = heights.iter().max().copied().unwrap_or_default();
     let has_local_atlas = !horizon_wiiu_worldgen::horizon_wiiu_world_terrain_atlas().is_null();
+    let mut timings = [0u64; 6];
+    assert_eq!(
+        horizon_wiiu_worldgen::horizon_wiiu_world_stage_timings(timings.as_mut_ptr()),
+        1
+    );
     let mut mesh_origin = [0i32; 2];
     assert_eq!(
         horizon_wiiu_worldgen::horizon_wiiu_world_chunk_position(chunk, mesh_origin.as_mut_ptr()),
         1
     );
     println!(
-        "Horizon 26.3 profile={profile} seed={seed} spawn=({}, {}) chunk=({}, {}) region_origin=({}, {}) radius={radius} mesh_vertices={vertex_count} surface_y={min_height}..{max_height} atlas={}",
+        "Horizon 26.3 profile={profile} seed={seed} spawn=({}, {}) chunk=({}, {}) region_origin=({}, {}) radius={radius} mesh_vertices={vertex_count} surface_y={min_height}..{max_height} atlas={} generated_chunks={} stage_ms=biomes:{},noise:{},surface:{},structures:{},carvers:{}",
         spawn[0], spawn[1], chunk_x, chunk_z, mesh_origin[0], mesh_origin[1],
-        if has_local_atlas { "local" } else { "placeholder" }
+        if has_local_atlas { "local" } else { "placeholder" },
+        timings[0],
+        timings[1] / 1000,
+        timings[2] / 1000,
+        timings[3] / 1000,
+        timings[4] / 1000,
+        timings[5] / 1000
     );
     horizon_wiiu_worldgen::horizon_wiiu_world_free_chunk(chunk);
 }

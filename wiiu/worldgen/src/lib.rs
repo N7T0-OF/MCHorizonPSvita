@@ -9,7 +9,9 @@ use horizon_terrain_data::TerrainVertex;
 use horizon_world::{
     level::data::load_registry_with_flags,
     registry::{BlockRegistry, BlockStateId},
-    worldgen::generator::{FlatSettings, GeneratorData, OverworldGenerator, ProtoChunk},
+    worldgen::generator::{
+        FlatSettings, GeneratorData, GeneratorWorker, OverworldGenerator, ProtoChunk, StageTimings,
+    },
 };
 use std::{
     ffi::{c_char, c_void, CStr},
@@ -167,7 +169,7 @@ impl Face {
 }
 
 struct WorldContext {
-    generator: OverworldGenerator,
+    worker: GeneratorWorker,
     opaque: Vec<bool>,
     materials: Vec<Material>,
     spawn: [i32; 2],
@@ -248,9 +250,10 @@ fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, Stri
         .spawn_position()
         .map_err(|error| format!("Horizon spawn search: {error}"))?;
     write_status(&format!("spawn found: {},{}\n", spawn[0], spawn[1]));
+    let worker = generator.worker();
 
     Ok(WorldContext {
-        generator,
+        worker,
         opaque,
         materials,
         spawn,
@@ -373,8 +376,7 @@ fn generate_chunk_mesh(
     let position = horizon_core::position::ChunkPos::new(chunk_x, chunk_z);
     write_status(&format!("chunk generation started: {chunk_x},{chunk_z}\n"));
     let proto = context
-        .generator
-        .worker()
+        .worker
         .generate_proto(position)
         .map_err(|error| format!("Horizon chunk generation: {error}"))?;
     write_status("proto-chunk generated\n");
@@ -556,11 +558,17 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
     }
     let min_height = heights.iter().min().copied().unwrap_or_default();
     let max_height = heights.iter().max().copied().unwrap_or_default();
+    let timings = context.worker.stage_timings();
     write_status(&format!(
-        "region meshed: center={center_x},{center_z} chunks={} vertices={} surface_y={min_height}..{max_height} atlas={}\n",
+        "region meshed: center={center_x},{center_z} chunks={} vertices={} surface_y={min_height}..{max_height} atlas={} gen_ms=biomes:{},noise:{},surface:{},structures:{},carvers:{}\n",
         side * side,
         vertices.len(),
-        if context.terrain_atlas.is_some() { "local" } else { "placeholder" }
+        if context.terrain_atlas.is_some() { "local" } else { "placeholder" },
+        timings.biomes.as_millis(),
+        timings.noise.as_millis(),
+        timings.surface.as_millis(),
+        timings.structures.as_millis(),
+        timings.carvers.as_millis()
     ));
     Box::into_raw(Box::new(WorldChunk {
         vertices: vertices.into_boxed_slice(),
@@ -600,6 +608,41 @@ pub extern "C" fn horizon_wiiu_world_terrain_atlas() -> *const u8 {
         .as_ref()
         .and_then(|context| context.terrain_atlas.as_ref())
         .map_or(ptr::null(), |atlas| atlas.as_ptr())
+}
+
+/// Copy worker timing totals as chunks, biomes, noise, surface, structures, carvers (microseconds).
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_stage_timings(output: *mut u64) -> i32 {
+    if output.is_null() {
+        return 0;
+    }
+    let loaded = world()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(context) = loaded.as_ref() else {
+        return 0;
+    };
+    let StageTimings {
+        chunks,
+        biomes,
+        noise,
+        surface,
+        structures,
+        carvers,
+    } = context.worker.stage_timings();
+    let micros =
+        |duration: std::time::Duration| u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
+    let values = [
+        chunks,
+        micros(biomes),
+        micros(noise),
+        micros(surface),
+        micros(structures),
+        micros(carvers),
+    ];
+    // SAFETY: the C caller provides six writable u64 entries.
+    unsafe { ptr::copy_nonoverlapping(values.as_ptr(), output, values.len()) };
+    1
 }
 
 /// Copy the generated Horizon world-surface heights for camera grounding.
