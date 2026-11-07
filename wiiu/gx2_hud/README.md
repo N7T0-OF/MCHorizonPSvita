@@ -10,7 +10,7 @@ The Rust bridge in `wiiu/platform/src/hud.rs` accepts Horizon's original `Blend`
 and font `Patch` values. It maps supported blends explicitly because Rust's
 `Blend` enum and its `Depth`/`CitGlint` payloads have no C ABI.
 
-Only alpha runs and the native GUI shader are implemented. Invert, additive, depth,
+Alpha and additive runs and the native GUI shader are implemented. Invert, depth,
 vignette, end portal, CIT glint, vanilla glint UVs and resource-pack text shaders return
 `HORIZON_HUD_UNSUPPORTED` before modifying GPU resources. Invalid ranges, missing data,
 capacity overflow and out-of-bounds patches return `HORIZON_HUD_INVALID`. A caller must

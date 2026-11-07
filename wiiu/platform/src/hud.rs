@@ -120,15 +120,16 @@ impl<'a> Prepared<'a> {
         }
         let mut runs = Vec::with_capacity(frame.runs.len());
         for (range, blend) in frame.runs {
-            // Only Alpha is implemented by the GX2 presenter. Never discard
-            // the payload of a Depth or CitGlint run to make it look supported.
-            if *blend != Blend::Alpha {
-                return Err(Error::Unsupported);
-            }
+            // Never discard the payload of a Depth or CitGlint run.
+            let blend = match blend {
+                Blend::Alpha => 0,
+                Blend::Additive => 2,
+                _ => return Err(Error::Unsupported),
+            };
             runs.push(RawRun {
                 start: range.start,
                 end: range.end,
-                blend: 0,
+                blend,
             });
         }
         // Desktop updates animated sprites before uploading the frame's
@@ -314,7 +315,6 @@ mod tests {
         assert_eq!(prepared.patches[0].length, 4);
         for blend in [
             Blend::Invert,
-            Blend::Additive,
             Blend::Depth([0; 4]),
             Blend::Vignette,
             Blend::EndPortal,
@@ -327,6 +327,12 @@ mod tests {
             };
             assert!(matches!(Prepared::new(&f), Err(Error::Unsupported)));
         }
+        let additive = [(0..3, Blend::Additive)];
+        let f = Frame {
+            runs: &additive,
+            ..frame
+        };
+        assert_eq!(Prepared::new(&f).unwrap().runs[0].blend, 2);
         let f = Frame {
             pack_text_shader: true,
             ..frame

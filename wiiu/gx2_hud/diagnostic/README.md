@@ -1,7 +1,7 @@
 # GX2 HUD diagnostic
 
 This opt-in RPX exercises the actual GX2 HUD presenter with original test pixels:
-an atlas upload and patch, two ordered alpha runs, and rejection of an unsupported
+an atlas upload and patch, ordered alpha/additive/alpha runs, and rejection of an unsupported
 invert run. It samples independently coloured red, green and blue texels with white
 vertices and checks that a fully transparent texel leaves the background unchanged.
 It is a diagnostic fixture, not a Horizon menu or gameplay. The target
@@ -23,13 +23,22 @@ verification technique, not evidence that this readback path works on hardware.
 For this single-frame diagnostic, set `<AsyncCompile>false</AsyncCompile>` in
 the isolated Cemu `portable/settings.xml`; otherwise the first draw may precede
 asynchronous shader compilation. Its fixed readback positions require a TV
-target wider than 864 pixels and taller than 64 pixels.
+target wider than 1184 pixels and taller than 64 pixels.
 Exit status is zero only if the sampled pixels pass. The diagnostic reports its
 status via `OSReport` and, when an SD card is mounted and the directory exists,
 `wiiu/apps/HorizonWiiU/hud-diagnostic-status.log`. Absence of the file is not a
 pass; mount, client, open or write failures can prevent its creation.
 
 ## Recorded Cemu 2.6 run
+
+The additive-blend diagnostic built on 2026-11-07 to RPX SHA-256
+`5e625dc1e5a197ad4068498c1f54fbac7db9d1fb11b6d776e522d86d94ed3384`.
+An isolated patched Cemu 2.6 run with synchronous shader compilation read back
+`(153,102,76,191)` for additive `(102,51,25,128)` over the grey
+`(51,51,51,63)` background, and `(0,0,255,255)` from the following alpha run.
+All existing texture and transparency samples also passed. This is a diagnostic
+fixture, not a live menu, and hardware has not been tested. Evidence is under
+`E:\temp\HorizonWiiU-hud-additive` on the build machine.
 
 The expanded RGBA diagnostic built on 2026-11-07 to RPX SHA-256
 `36811cc0fbc7c9f35a6ac7461ecd158215937ceb5ecf3589191e56e4ae929aa8`.

@@ -21,7 +21,8 @@ HorizonHudResult horizon_hud_validate(const HorizonHudFrame *f, uint32_t width,
       const HorizonHudRun *r = &f->runs[i];
       if (r->start != next || r->end < r->start || r->end > f->vertex_count || r->start % 3 || r->end % 3)
          return HORIZON_HUD_INVALID;
-      if (r->blend != HORIZON_HUD_ALPHA) return HORIZON_HUD_UNSUPPORTED;
+      if (r->blend != HORIZON_HUD_ALPHA && r->blend != HORIZON_HUD_ADDITIVE)
+         return HORIZON_HUD_UNSUPPORTED;
       next = r->end;
    }
    if (next != f->vertex_count) return HORIZON_HUD_INVALID;

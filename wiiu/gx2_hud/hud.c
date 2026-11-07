@@ -175,10 +175,18 @@ HorizonHudResult horizon_gx2_hud_draw(HorizonGx2Hud *hud, const HorizonHudFrame 
    GX2SetTargetChannelMasks(GX2_CHANNEL_MASK_RGBA, (GX2ChannelMask)0, (GX2ChannelMask)0,
                             (GX2ChannelMask)0, (GX2ChannelMask)0, (GX2ChannelMask)0,
                             (GX2ChannelMask)0, (GX2ChannelMask)0);
-   GX2SetBlendControl(GX2_RENDER_TARGET_0, GX2_BLEND_MODE_SRC_ALPHA, GX2_BLEND_MODE_INV_SRC_ALPHA,
-                      GX2_BLEND_COMBINE_MODE_ADD, TRUE, GX2_BLEND_MODE_ONE,
-                      GX2_BLEND_MODE_INV_SRC_ALPHA, GX2_BLEND_COMBINE_MODE_ADD);
-   for (uint32_t i = 0; i < f->run_count; ++i)
+   for (uint32_t i = 0; i < f->run_count; ++i) {
+      if (f->runs[i].blend == HORIZON_HUD_ADDITIVE) {
+         /* Horizon's BlendFunction.ADDITIVE: ONE, ONE for color and alpha. */
+         GX2SetBlendControl(GX2_RENDER_TARGET_0, GX2_BLEND_MODE_ONE, GX2_BLEND_MODE_ONE,
+                            GX2_BLEND_COMBINE_MODE_ADD, TRUE, GX2_BLEND_MODE_ONE,
+                            GX2_BLEND_MODE_ONE, GX2_BLEND_COMBINE_MODE_ADD);
+      } else {
+         GX2SetBlendControl(GX2_RENDER_TARGET_0, GX2_BLEND_MODE_SRC_ALPHA, GX2_BLEND_MODE_INV_SRC_ALPHA,
+                            GX2_BLEND_COMBINE_MODE_ADD, TRUE, GX2_BLEND_MODE_ONE,
+                            GX2_BLEND_MODE_INV_SRC_ALPHA, GX2_BLEND_COMBINE_MODE_ADD);
+      }
       GX2DrawEx(GX2_PRIMITIVE_MODE_TRIANGLES, f->runs[i].end - f->runs[i].start, f->runs[i].start, 1);
+   }
    return HORIZON_HUD_OK;
 }

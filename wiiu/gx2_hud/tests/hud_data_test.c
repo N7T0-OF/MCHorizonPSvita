@@ -34,6 +34,8 @@ int main(void)
    assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_INVALID);
    runs[1].start = 3; runs[1].blend = HORIZON_HUD_INVERT;
    assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_UNSUPPORTED);
+   runs[1].blend = HORIZON_HUD_ADDITIVE;
+   assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_OK);
    runs[1].blend = HORIZON_HUD_ALPHA; patch.x = 7;
    assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_INVALID);
    patch.x = 2; patch.length = 15;
