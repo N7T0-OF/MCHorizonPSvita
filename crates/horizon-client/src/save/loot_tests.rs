@@ -1,4 +1,5 @@
 use super::*;
+use horizon_world::nbt;
 
 fn fixture() -> (BlockRegistry, Biomes) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
