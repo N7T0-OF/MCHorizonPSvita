@@ -21,9 +21,14 @@
 //! of its sources and nothing else, so a source may call [`Pool::notify`]
 //! anywhere, its queue's lock held or not; a notify never waits for a worker.
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::{Duration, Instant};
+
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::AtomicU64;
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::AtomicU64;
 
 /// How urgent a job is, before its source's key: every queued job of a lower
 /// class runs before any of a higher one.

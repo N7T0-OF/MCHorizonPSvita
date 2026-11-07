@@ -11,6 +11,9 @@ horizon-core = { path = "../horizon-core" }
 log = "0.4"
 regex = { version = "1", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
 
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { version = "1.15", default-features = false, features = ["fallback"] }
+
 [dev-dependencies]
 # `cpu_seconds` for cem_expr_bench.
 horizon-bench = { path = "../horizon-bench" }

@@ -4,6 +4,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_DIR="${HORIZON_WIIU_BUILD_DIR:-${TMPDIR:-/tmp}/horizonwiiu-bootstrap}"
+WORLDGEN_ENABLED="${HORIZON_WIIU_WORLDGEN:-1}"
+DIAGNOSTIC_FIXTURE_ENABLED="${HORIZON_WIIU_DIAGNOSTIC_FIXTURE:-0}"
+if [[ -n "${HORIZON_WIIU_CAPTURE_DIR:-}" && -z "${HORIZON_WIIU_WORLDGEN+x}" ]]; then
+   WORLDGEN_ENABLED=0
+fi
+if [[ "${WORLDGEN_ENABLED}" != "0" && "${WORLDGEN_ENABLED}" != "1" ]]; then
+   printf 'HORIZON_WIIU_WORLDGEN must be 0 or 1.\n' >&2
+   exit 1
+fi
+if [[ "${DIAGNOSTIC_FIXTURE_ENABLED}" != "0" && "${DIAGNOSTIC_FIXTURE_ENABLED}" != "1" ]]; then
+   printf 'HORIZON_WIIU_DIAGNOSTIC_FIXTURE must be 0 or 1.\n' >&2
+   exit 1
+fi
+if [[ "${WORLDGEN_ENABLED}" == "1" && "${DIAGNOSTIC_FIXTURE_ENABLED}" == "1" ]]; then
+   printf 'Select either Horizon worldgen or the diagnostic fixture, not both.\n' >&2
+   exit 1
+fi
+if [[ -n "${HORIZON_WIIU_CAPTURE_DIR:-}" && "${WORLDGEN_ENABLED}" == "1" ]]; then
+   printf 'Select either Horizon worldgen or a captured Horizon scene, not both.\n' >&2
+   exit 1
+fi
+if [[ -z "${HORIZON_WIIU_CAPTURE_DIR:-}" && "${WORLDGEN_ENABLED}" == "0" && "${DIAGNOSTIC_FIXTURE_ENABLED}" == "0" ]]; then
+   printf 'Select Horizon worldgen (default) or explicitly set HORIZON_WIIU_DIAGNOSTIC_FIXTURE=1.\n' >&2
+   exit 1
+fi
 
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 export DEVKITPPC="${DEVKITPPC:-${DEVKITPRO}/devkitPPC}"
@@ -16,7 +41,7 @@ fi
 mkdir -p "${BUILD_DIR}"
 
 WORLDGEN_STATICLIB=""
-if [[ "${HORIZON_WIIU_WORLDGEN:-0}" == "1" ]]; then
+if [[ "${WORLDGEN_ENABLED}" == "1" ]]; then
    if [[ -z "${HORIZON_WIIU_STD_RUSTC:-}" || ! -x "${HORIZON_WIIU_STD_RUSTC}" ]]; then
       printf 'Set HORIZON_WIIU_STD_RUSTC to the Cafe stage-1 rustc built from rust-wiiu/rust.\n' >&2
       exit 1
@@ -26,7 +51,7 @@ if [[ "${HORIZON_WIIU_WORLDGEN:-0}" == "1" ]]; then
       cd "${SCRIPT_DIR}/../worldgen"
       CARGO_TARGET_DIR="${WORLDGEN_CARGO_TARGET_DIR}" \
          RUSTC="${HORIZON_WIIU_STD_RUSTC}" \
-         cargo +nightly build --release --lib --jobs "$(nproc)" \
+         cargo +nightly build --release --lib --features cafe --jobs "$(nproc)" \
             --manifest-path "${SCRIPT_DIR}/../worldgen/Cargo.toml" \
             --target powerpc-nintendo-cafe
    )
@@ -66,7 +91,8 @@ powerpc-eabi-cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" -G Ninja \
    -DCMAKE_BUILD_TYPE=Release \
    -DHORIZON_WIIU_CAPTURE_DIR="${HORIZON_WIIU_CAPTURE_DIR:-}" \
    -DHORIZON_WIIU_CAPTURE_MAX_VERTICES="${HORIZON_WIIU_CAPTURE_MAX_VERTICES:-65536}" \
-   -DHORIZON_WIIU_WORLDGEN="$([[ "${HORIZON_WIIU_WORLDGEN:-0}" == "1" ]] && echo ON || echo OFF)" \
+   -DHORIZON_WIIU_WORLDGEN="$([[ "${WORLDGEN_ENABLED}" == "1" ]] && echo ON || echo OFF)" \
+   -DHORIZON_WIIU_DIAGNOSTIC_FIXTURE="$([[ "${DIAGNOSTIC_FIXTURE_ENABLED}" == "1" ]] && echo ON || echo OFF)" \
    -DHORIZON_WIIU_WORLDGEN_STATICLIB="${WORLDGEN_STATICLIB}" \
    -DHORIZON_WIIU_WORLD_PROFILE_SUPERFLAT="${HORIZON_WIIU_WORLD_PROFILE_SUPERFLAT:-1}" \
    -DHORIZON_WIIU_WORLD_REGION_RADIUS="${HORIZON_WIIU_WORLD_REGION_RADIUS:-1}" \

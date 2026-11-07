@@ -7,12 +7,17 @@ publish = false
 [lib]
 crate-type = ["staticlib", "rlib"]
 
+[features]
+default = []
+cafe = []
+
 [dependencies]
 horizon-core = { path = "../../crates/horizon-core" }
+horizon-client-platform = { path = "../../crates/horizon-client-platform", default-features = false, features = ["cafe"] }
+horizon-items = { path = "../../crates/horizon-items" }
 horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
+horizon-terrain-mesh = { path = "../../crates/horizon-terrain-mesh", default-features = false }
 horizon-world = { path = "../../crates/horizon-world", features = ["cafe-terrain-only"] }
-
-[dev-dependencies]
-png = "0.18"
+log = "0.4"
 
 [workspace]

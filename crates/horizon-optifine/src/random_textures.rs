@@ -32,6 +32,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::AtomicU64;
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::AtomicU64;
+
 use crate::paths::files_under;
 use crate::properties::Properties;
 use crate::random::{MAX_INDEX, Rules};
@@ -84,7 +89,7 @@ struct Source {
 
 impl RandomTextures {
     pub fn scan(root: &Path) -> Self {
-        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        static GENERATION: AtomicU64 = AtomicU64::new(1);
         let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self {
             generation,

@@ -1714,6 +1714,7 @@ dependencies = [
  "horizon-bench",
  "horizon-core",
  "log",
+ "portable-atomic",
  "regex",
 ]
 
@@ -1879,6 +1880,7 @@ dependencies = [
  "log",
  "lz4_flex",
  "png",
+ "portable-atomic",
  "rustix 1.1.5",
  "serde",
  "serde_json",
@@ -1895,6 +1897,7 @@ dependencies = [
  "libc",
  "libmimalloc-sys",
  "mimalloc",
+ "portable-atomic",
  "windows-sys 0.61.2",
 ]
 

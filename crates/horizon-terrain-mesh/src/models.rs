@@ -136,6 +136,40 @@ pub(crate) fn prepare_with_models(
         states,
     })
 }
+
+/// Block models and textures needed to mesh terrain, without the standalone
+/// models or inspection gallery used by the full client asset load. The
+/// resolver reads only block models referenced by blockstates and their
+/// parents, using the same binding and baking path as [`prepare_with_models`].
+pub(crate) fn prepare_for_terrain(
+    root: &Path,
+    registry: &BlockRegistry,
+    sprites: &mut Sprites,
+) -> Result<PreparedModels> {
+    let facts: std::collections::BTreeMap<String, Value> =
+        serde_json::from_slice(&std::fs::read(root.join("model-states.json"))?)?;
+    let blocks: Vec<&str> = facts
+        .keys()
+        .filter(|name| registry.default_state(name).is_some())
+        .map(|name| name.strip_prefix("minecraft:").unwrap_or(name))
+        .collect();
+    let catalog = {
+        let _step = crate::spans::startup::step("core.bake_states");
+        StateModels::from_facts_with_models(
+            root,
+            registry,
+            &blocks,
+            sprites,
+            &facts,
+            &crate::model_library::ParsedModels::default(),
+        )?
+    };
+    Ok(PreparedModels {
+        catalog,
+        placements: Vec::new(),
+        states: Vec::new(),
+    })
+}
 pub fn instance(face: &catalog::BakedFace, position: BlockPos) -> ModelInstance {
     let origin = [position.x as f32, position.y as f32, position.z as f32];
     ModelInstance {

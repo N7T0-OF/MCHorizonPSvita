@@ -3,6 +3,11 @@ use crate::Result;
 use horizon_assets::animation::{AnimationClip, AnimationMetadata};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::AtomicU64;
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::AtomicU64;
+
 #[derive(Clone)]
 pub struct SpriteAnimation {
     pub layer: u32,
@@ -116,6 +121,8 @@ pub struct Sprites {
     /// Textures [`Sprites::prefetch`] decoded ahead of their insert, by sprite name or
     /// resource path.
     ready: std::collections::HashMap<String, crate::sprite_cache::Decoded>,
+    /// This renderer does not upload the resource pack's LabPBR side maps.
+    skip_pbr: bool,
 }
 /// Edge length of vanilla's block textures: the smallest array layer.
 pub const SPRITE_SIZE: u32 = 16;
@@ -123,8 +130,7 @@ pub const SPRITE_SIZE: u32 = 16;
 /// Horizon: resource packs with bigger textures are sampled down to fit.
 pub const DEFAULT_TEXTURE_BUDGET: u64 = 256 << 20;
 /// The budget in bytes the next resource load keeps to (`set_texture_budget`).
-static TEXTURE_BUDGET: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(DEFAULT_TEXTURE_BUDGET);
+static TEXTURE_BUDGET: AtomicU64 = AtomicU64::new(DEFAULT_TEXTURE_BUDGET);
 /// The block textures' budget from the `textureBudgetMiB` setting (0 for the default), for
 /// resources loaded from now on.
 pub fn set_texture_budget(mib: u32) {
@@ -203,11 +209,21 @@ impl Sprites {
             ..Self::default()
         }
     }
-    /// Write what this run decoded to the cache file.
-    pub fn save_disk_cache(&mut self) {
-        if let Some(disk) = &mut self.disk {
-            disk.save();
+    /// Terrain-only renderers use Horizon's colour/animation sprites, but do
+    /// not load normal and specular maps they cannot submit to their backend.
+    pub(crate) fn with_disk_cache_without_pbr(root: &Path) -> Self {
+        Self {
+            disk: crate::sprite_cache::SpriteCache::open_prepared(root)
+                .or_else(|| crate::sprite_cache::SpriteCache::open(root)),
+            skip_pbr: true,
+            ..Self::default()
         }
+    }
+    /// Write what this run decoded to the cache file.
+    pub fn save_disk_cache(&mut self) -> bool {
+        self.disk
+            .as_mut()
+            .is_some_and(crate::sprite_cache::SpriteCache::save)
     }
     /// How many array layers the textures take.
     pub fn count(&self) -> usize {
@@ -650,12 +666,13 @@ impl Sprites {
             .transpose()?;
         let count = frames.len() as u32;
         let layer = u32::try_from(self.native.len())?;
-        let pbr = match name.split_once(':') {
-            Some(_) if labpbr_maps() => {
+        let pbr = match (self.skip_pbr, name.split_once(':')) {
+            (true, _) => [None, None],
+            (false, Some(_)) if labpbr_maps() => {
                 let path = crate::atlas_sources::texture_path(root, name, "textures");
                 ["_n", "_s"].map(|suffix| pbr_map(&path, suffix, count, animation.as_ref()))
             }
-            None if labpbr_maps() && !name.starts_with("fusion/") => ["_n", "_s"]
+            (false, None) if labpbr_maps() && !name.starts_with("fusion/") => ["_n", "_s"]
                 .map(|suffix| pbr_map(&root.join(name), suffix, count, animation.as_ref())),
             _ => [None, None],
         };

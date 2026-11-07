@@ -15,6 +15,12 @@ const MAGIC: &[u8; 4] = b"HSPR";
 /// Bump when `Decoded` or the decoding in `Sprites::decode` changes.
 const VERSION: u32 = 1;
 const FILE: &str = "horizon-sprites.cache";
+const TERRAIN_MARKER: &str = "horizon-wiiu-terrain-sprites.ready";
+const TERRAIN_MARKER_CONTENTS: &[u8] = b"Horizon Wii U terrain sprite cache v1\n";
+// Keep these in sync with horizon-prepare's SCHEMA and OUTPUT_VERSION. Avoid
+// depending on the desktop preparation tool from the terrain crate.
+const PREPARED_SCHEMA: i64 = 7;
+const PREPARED_OUTPUT_VERSION: u32 = 3;
 
 /// What decoding one texture gives, before it takes a layer.
 #[derive(Clone)]
@@ -35,6 +41,7 @@ pub(crate) struct SpriteCache {
     fingerprint: u64,
     entries: HashMap<String, Decoded>,
     dirty: bool,
+    valid: bool,
 }
 
 /// Paths, sizes and modification times of every file under `assets/*/textures`,
@@ -74,13 +81,52 @@ impl SpriteCache {
         let path = root.join(FILE);
         let entries = fs::read(&path)
             .ok()
-            .and_then(|bytes| parse(&bytes, fingerprint))
-            .unwrap_or_default();
+            .and_then(|bytes| parse(&bytes, fingerprint));
+        let valid = entries.is_some();
+        Some(Self {
+            path,
+            fingerprint,
+            entries: entries.unwrap_or_default(),
+            dirty: false,
+            valid,
+        })
+    }
+    /// Open the cache produced for a complete prepared resource root without
+    /// walking every texture to recompute its fingerprint. The prepared
+    /// manifest and current prep stamp are written only after resource export
+    /// finishes. Require their pinned schema/tool versions, game/data version,
+    /// resource count, and this crate's terrain-cache marker before trusting
+    /// the embedded fingerprint. Regenerate the cache whenever prepared
+    /// textures change; otherwise use [`Self::open`].
+    pub fn open_prepared(root: &Path) -> Option<Self> {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("horizon-resources.json")).ok()?).ok()?;
+        if manifest["schema"].as_i64() != Some(PREPARED_SCHEMA)
+            || manifest["minecraft"].as_str() != Some(horizon_core::version::VERSION_ID)
+            || manifest["data_version"].as_i64() != Some(i64::from(horizon_world::DATA_VERSION))
+            || manifest["resource_files"]
+                .as_i64()
+                .is_none_or(|count| count <= 0)
+        {
+            return None;
+        }
+        let stamp: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("horizon-prepare.json")).ok()?).ok()?;
+        if stamp["output_version"].as_u64() != Some(u64::from(PREPARED_OUTPUT_VERSION))
+            || fs::read(root.join(TERRAIN_MARKER)).ok()?.as_slice() != TERRAIN_MARKER_CONTENTS
+        {
+            return None;
+        }
+        let path = root.join(FILE);
+        let bytes = fs::read(&path).ok()?;
+        let fingerprint = embedded_fingerprint(&bytes)?;
+        let entries = parse(&bytes, fingerprint)?;
         Some(Self {
             path,
             fingerprint,
             entries,
             dirty: false,
+            valid: true,
         })
     }
     pub fn get(&self, name: &str) -> Option<&Decoded> {
@@ -91,20 +137,39 @@ impl SpriteCache {
         self.dirty = true;
     }
     /// Write new entries; a failure only costs the next launch the decoding.
-    pub fn save(&mut self) {
+    pub fn save(&mut self) -> bool {
         if !self.dirty {
-            return;
+            return self.valid;
         }
-        self.dirty = false;
         let temporary = self
             .path
             .with_extension(format!("{}.tmp", std::process::id()));
-        if fs::write(&temporary, serialize(self.fingerprint, &self.entries)).is_ok()
-            && fs::rename(&temporary, &self.path).is_err()
-        {
+        self.valid = fs::write(&temporary, serialize(self.fingerprint, &self.entries)).is_ok()
+            && fs::rename(&temporary, &self.path).is_ok();
+        if !self.valid {
             let _ = fs::remove_file(&temporary);
         }
+        self.dirty = !self.valid;
+        self.valid
     }
+}
+
+/// Remove both the Wii U trust marker and its derived decoded-sprite cache so
+/// the next terrain reload fingerprints textures and rebuilds the cache.
+pub(crate) fn invalidate_terrain_cache(root: &Path) -> std::io::Result<()> {
+    for name in [TERRAIN_MARKER, FILE] {
+        match fs::remove_file(root.join(name)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The caller invokes this only after a complete terrain reload and a valid
+/// sprite cache save.
+pub(crate) fn mark_terrain_cache_ready(root: &Path) -> std::io::Result<()> {
+    fs::write(root.join(TERRAIN_MARKER), TERRAIN_MARKER_CONTENTS)
 }
 
 fn serialize(fingerprint: u64, entries: &HashMap<String, Decoded>) -> Vec<u8> {
@@ -201,6 +266,14 @@ fn parse(bytes: &[u8], fingerprint: u64) -> Option<HashMap<String, Decoded>> {
     r.0.is_empty().then_some(entries)
 }
 
+fn embedded_fingerprint(bytes: &[u8]) -> Option<u64> {
+    let mut r = Reader(bytes);
+    if r.take(4)? != MAGIC || r.u32()? != VERSION {
+        return None;
+    }
+    Some(u64::from_le_bytes(r.take(8)?.try_into().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +296,26 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("assets/minecraft/textures/block")).unwrap();
         dir
+    }
+    fn write_prepared_metadata(root: &Path, schema: i64, output_version: Option<u32>) {
+        fs::write(
+            root.join("horizon-resources.json"),
+            format!(
+                r#"{{"schema":{schema},"minecraft":"{}","data_version":{},"resource_files":1}}"#,
+                horizon_core::version::VERSION_ID,
+                horizon_world::DATA_VERSION,
+            ),
+        )
+        .unwrap();
+        if let Some(output_version) = output_version {
+            fs::write(
+                root.join("horizon-prepare.json"),
+                format!(r#"{{"output_version":{output_version}}}"#),
+            )
+            .unwrap();
+        } else {
+            let _ = fs::remove_file(root.join("horizon-prepare.json"));
+        }
     }
     #[test]
     fn round_trips() {
@@ -298,6 +391,132 @@ mod tests {
                 .unwrap()
                 .get("minecraft:block/x")
                 .is_none()
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+    #[test]
+    fn prepared_cache_requires_current_prep_stamp_schema_and_terrain_marker() {
+        let root = scratch("prepared");
+        let png = root.join("assets/minecraft/textures/block/x.png");
+        fs::write(&png, b"one").unwrap();
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        write_prepared_metadata(&root, PREPARED_SCHEMA, None);
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        write_prepared_metadata(&root, PREPARED_SCHEMA, Some(2));
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        write_prepared_metadata(&root, PREPARED_SCHEMA - 1, Some(PREPARED_OUTPUT_VERSION));
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        write_prepared_metadata(&root, PREPARED_SCHEMA, Some(PREPARED_OUTPUT_VERSION));
+
+        let mut cache = SpriteCache::open(&root).unwrap();
+        cache.insert("minecraft:block/x", sample(1, None));
+        assert!(cache.save());
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        mark_terrain_cache_ready(&root).unwrap();
+        assert!(
+            SpriteCache::open_prepared(&root)
+                .unwrap()
+                .get("minecraft:block/x")
+                .is_some()
+        );
+
+        fs::remove_file(root.join(TERRAIN_MARKER)).unwrap();
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        mark_terrain_cache_ready(&root).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        fs::write(&png, b"two").unwrap();
+        assert!(
+            SpriteCache::open(&root)
+                .unwrap()
+                .get("minecraft:block/x")
+                .is_none()
+        );
+        assert!(
+            SpriteCache::open_prepared(&root)
+                .unwrap()
+                .get("minecraft:block/x")
+                .is_some()
+        );
+
+        fs::remove_dir_all(root.join("assets")).unwrap();
+        assert!(SpriteCache::open(&root).is_none());
+        assert!(
+            SpriteCache::open_prepared(&root)
+                .unwrap()
+                .get("minecraft:block/x")
+                .is_some()
+        );
+
+        write_prepared_metadata(&root, PREPARED_SCHEMA, Some(PREPARED_OUTPUT_VERSION));
+        fs::write(root.join("horizon-resources.json"), b"{}\n").unwrap();
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        write_prepared_metadata(&root, PREPARED_SCHEMA, Some(PREPARED_OUTPUT_VERSION));
+        fs::write(
+            root.join("horizon-resources.json"),
+            format!(
+                r#"{{"schema":{},"minecraft":"26.2","data_version":{},"resource_files":1}}"#,
+                PREPARED_SCHEMA,
+                horizon_world::DATA_VERSION,
+            ),
+        )
+        .unwrap();
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        write_prepared_metadata(&root, PREPARED_SCHEMA, Some(PREPARED_OUTPUT_VERSION));
+        fs::write(
+            root.join("horizon-resources.json"),
+            format!(
+                r#"{{"schema":{},"minecraft":"{}","data_version":0,"resource_files":1}}"#,
+                PREPARED_SCHEMA,
+                horizon_core::version::VERSION_ID,
+            ),
+        )
+        .unwrap();
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        write_prepared_metadata(&root, PREPARED_SCHEMA, Some(PREPARED_OUTPUT_VERSION));
+        fs::write(root.join(FILE), b"HSPR\x02\0\0\0 invalid version").unwrap();
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+    #[test]
+    fn terrain_cache_invalidation_forces_stale_entries_to_be_rebuilt() {
+        let root = scratch("terrain-rebuild");
+        let png = root.join("assets/minecraft/textures/block/x.png");
+        fs::write(&png, b"one").unwrap();
+        write_prepared_metadata(&root, PREPARED_SCHEMA, Some(PREPARED_OUTPUT_VERSION));
+
+        let mut old = SpriteCache::open(&root).unwrap();
+        old.insert("minecraft:block/x", sample(1, None));
+        assert!(old.save());
+        mark_terrain_cache_ready(&root).unwrap();
+        assert_eq!(
+            SpriteCache::open_prepared(&root)
+                .unwrap()
+                .get("minecraft:block/x")
+                .unwrap()
+                .frames[0][0],
+            1
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        fs::write(&png, b"two").unwrap();
+        invalidate_terrain_cache(&root).unwrap();
+        assert!(!root.join(FILE).exists());
+        assert!(!root.join(TERRAIN_MARKER).exists());
+        assert!(SpriteCache::open_prepared(&root).is_none());
+
+        let mut rebuilt = SpriteCache::open(&root).unwrap();
+        assert!(rebuilt.get("minecraft:block/x").is_none());
+        rebuilt.insert("minecraft:block/x", sample(9, None));
+        assert!(rebuilt.save());
+        assert!(SpriteCache::open_prepared(&root).is_none());
+        mark_terrain_cache_ready(&root).unwrap();
+        assert_eq!(
+            SpriteCache::open_prepared(&root)
+                .unwrap()
+                .get("minecraft:block/x")
+                .unwrap()
+                .frames[0][0],
+            9
         );
         let _ = fs::remove_dir_all(&root);
     }

@@ -8,8 +8,8 @@ publish = false
 crate-type = ["staticlib"]
 
 [features]
-default = ["runtime-demo"]
-runtime-demo = ["dep:horizon-core"]
+default = []
+diagnostic-fixture = ["dep:horizon-core"]
 wiiu-worldgen-render = []
 
 [dependencies]

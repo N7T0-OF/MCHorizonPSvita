@@ -10,6 +10,11 @@ use super::curves::{self, Curve, Ease};
 use std::cell::{Cell, RefCell};
 use std::fmt;
 
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::AtomicU64;
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::AtomicU64;
+
 /// The value stack on the program's own frame; deeper programs (long `keyframe` tracks) use a
 /// buffer kept per thread.
 const STACK: usize = 64;
@@ -157,7 +162,7 @@ thread_local! {
 }
 
 fn random_start() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::Ordering;
     use std::time::{SystemTime, UNIX_EPOCH};
     static THREADS: AtomicU64 = AtomicU64::new(0);
     let now = SystemTime::now()

@@ -1,26 +1,28 @@
-//! CafeOS bridge from Horizon's real 26.3 proto-chunks to the GX2 renderer.
+//! CafeOS renderer diagnostic using Horizon's real 26.3 proto-chunks and GX2.
 //!
-//! The renderer receives the same shared `TerrainVertex` ABI used by Horizon's
-//! desktop client. Block shape selection is intentionally simple in this
-//! first bridge; chunk states, registry, seed, height and terrain come from
-//! `horizon-world`'s production OverworldGenerator.
+//! The renderer receives the same shared `TerrainVertex` ABI and canonical
+//! section meshes used by Horizon's desktop client. The bridge adapts its
+//! runtime block and biome storage to the portable Horizon mesher.
 
-use horizon_core::position::ChunkPos;
+use horizon_core::{
+    biome::{obfuscate_seed, BiomeZoom},
+    position::ChunkPos,
+};
+use horizon_items::blocks::BlockFacts;
 use horizon_terrain_data::TerrainVertex;
-use horizon_world::{
-    compression::Compression,
-    level::data::load_registry_with_flags,
-    nbt::{Limits, NamedTag, Tag},
-    region::{ChunkRecord, RegionFile},
-    registry::{BlockRegistry, BlockStateId},
-    worldgen::generator::{
-        FlatSettings, GeneratorData, GeneratorWorker, OverworldGenerator, ProtoChunk, StageTimings,
-    },
+use horizon_terrain_mesh::{
+    assets::{Assets, RenderAssets},
+    biome::Biomes,
+    mesher::{MeshScratch, MeshTables, Mesher},
+    models::load_visibility,
+    LeafCullingMode, MeshChunk, MeshSectionView, SectionMesh, OPAQUE_LAYER,
+};
+use horizon_world::worldgen::generator::{
+    FlatSettings, GeneratorData, GeneratorWorker, OverworldGenerator, ProtoChunk, StageTimings,
 };
 use std::{
-    collections::HashMap,
     ffi::{c_char, c_void, CStr},
-    path::{Path, PathBuf},
+    path::Path,
     ptr,
     sync::{Mutex, OnceLock},
     thread::{self, JoinHandle},
@@ -28,177 +30,380 @@ use std::{
 
 const SECTION_VOLUME: usize = 16 * 16 * 16;
 const COLUMN_COUNT: usize = 16 * 16;
-const TERRAIN_ATLAS_BYTES: usize = 64 * 32 * 4;
+const APP_HOME_PATH: &str = "/vol/external01/wiiu/apps/HorizonWiiU";
 const STATUS_PATH: &str = "/vol/external01/wiiu/apps/HorizonWiiU/worldgen-status.log";
-const MAX_SAVED_EDITS: usize = 262_144;
+
+struct TerrainAtlas {
+    pixels: Box<[u8]>,
+    width: u32,
+    height: u32,
+    sprite_size: u32,
+    cell_size: u32,
+    columns: u32,
+    layers: u32,
+}
+
+impl TerrainAtlas {
+    fn from_render_assets(render: &RenderAssets) -> Result<Self, String> {
+        let sprite_size = render.sprite_size;
+        let layers = render.texture_layers;
+        if sprite_size == 0 || layers == 0 {
+            return Err(format!(
+                "Horizon sprite atlas has invalid dimensions: {layers} layers at {sprite_size}px"
+            ));
+        }
+        if layers > u32::from(OPAQUE_LAYER) {
+            return Err(format!(
+                "Horizon has {layers} sprite layers; terrain vertices reserve layer {} as a flag",
+                OPAQUE_LAYER
+            ));
+        }
+        let cell_size = sprite_size
+            .checked_add(2)
+            .ok_or_else(|| "Horizon sprite cell size overflow".to_owned())?;
+        let source = render.pixels.get();
+        let expected = usize::try_from(layers)
+            .ok()
+            .and_then(|layers| layers.checked_mul(sprite_size as usize))
+            .and_then(|bytes| bytes.checked_mul(sprite_size as usize))
+            .and_then(|bytes| bytes.checked_mul(4))
+            .ok_or_else(|| "Horizon sprite layer byte count overflow".to_owned())?;
+        if source.len() != expected {
+            return Err(format!(
+                "Horizon sprite pixels have {} bytes, expected {expected}",
+                source.len()
+            ));
+        }
+
+        // Choose a power-of-two cell grid and texture dimensions to keep GX2
+        // allocation predictable while minimizing unused atlas space.
+        let mut columns = 1u32;
+        let mut best = None::<(u64, u32, u32, u32)>;
+        while columns <= layers.next_power_of_two() {
+            let rows = layers.div_ceil(columns);
+            let raw_width = columns
+                .checked_mul(cell_size)
+                .ok_or_else(|| "Horizon atlas width overflow".to_owned())?;
+            let raw_height = rows
+                .checked_mul(cell_size)
+                .ok_or_else(|| "Horizon atlas height overflow".to_owned())?;
+            let width = raw_width
+                .checked_next_power_of_two()
+                .ok_or_else(|| "Horizon atlas width overflow".to_owned())?;
+            let height = raw_height
+                .checked_next_power_of_two()
+                .ok_or_else(|| "Horizon atlas height overflow".to_owned())?;
+            if width <= 8192 && height <= 8192 {
+                let area = u64::from(width) * u64::from(height);
+                if best.is_none_or(|(best_area, _, _, _)| area < best_area) {
+                    best = Some((area, columns, width, height));
+                }
+            }
+            columns = columns
+                .checked_mul(2)
+                .ok_or_else(|| "Horizon atlas column count overflow".to_owned())?;
+        }
+        let Some((_, columns, width, height)) = best else {
+            return Err(format!(
+                "Horizon's {layers} sprite layers at {sprite_size}px exceed the GX2 8192px atlas limit"
+            ));
+        };
+        let pixel_bytes = usize::try_from(width)
+            .ok()
+            .and_then(|width| width.checked_mul(height as usize))
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| "Horizon atlas byte count overflow".to_owned())?;
+        let mut pixels = vec![0; pixel_bytes];
+        for layer in 0..layers {
+            let cell_x = (layer % columns) * cell_size;
+            let cell_y = (layer / columns) * cell_size;
+            let source_layer = layer as usize * sprite_size as usize * sprite_size as usize * 4;
+            for y in 0..cell_size {
+                let source_y = y.saturating_sub(1).min(sprite_size - 1) as usize;
+                for x in 0..cell_size {
+                    let source_x = x.saturating_sub(1).min(sprite_size - 1) as usize;
+                    let source_at = source_layer + (source_y * sprite_size as usize + source_x) * 4;
+                    let target_at =
+                        (((cell_y + y) as usize * width as usize) + (cell_x + x) as usize) * 4;
+                    pixels[target_at..target_at + 4]
+                        .copy_from_slice(&source[source_at..source_at + 4]);
+                }
+            }
+        }
+        Ok(Self {
+            pixels: pixels.into_boxed_slice(),
+            width,
+            height,
+            sprite_size,
+            cell_size,
+            columns,
+            layers,
+        })
+    }
+
+    fn remap_vertex(&self, vertex: &mut TerrainVertex) -> Result<(), String> {
+        let layer = u32::from(vertex.layer & !OPAQUE_LAYER);
+        if layer >= self.layers {
+            return Err(format!(
+                "Horizon mesh references sprite layer {layer}, atlas has {} layers",
+                self.layers
+            ));
+        }
+        let cell_x = (layer % self.columns) * self.cell_size;
+        let cell_y = (layer / self.columns) * self.cell_size;
+        let [u, v] = vertex.uv();
+        // Horizon's terrain sampler clamps each sprite's UV to its edge.
+        // Sample texel centers inside the padded atlas cell to match that path.
+        let inset = 1.5;
+        let span = (self.sprite_size - 1) as f32;
+        let atlas_uv = [
+            (cell_x as f32 + inset + u.clamp(0.0, 1.0) * span) / self.width as f32,
+            (cell_y as f32 + inset + v.clamp(0.0, 1.0) * span) / self.height as f32,
+        ];
+        vertex.uv = TerrainVertex::new(
+            vertex.pos,
+            atlas_uv,
+            vertex.layer & OPAQUE_LAYER,
+            vertex.color,
+            vertex.light,
+        )
+        .uv;
+        vertex.layer &= OPAQUE_LAYER;
+        Ok(())
+    }
+}
+
+/// Build the padded 2D RGBA atlas used by the Wii U terrain renderer from
+/// Horizon's canonical baked sprite layers.
+pub fn build_terrain_atlas(render: &RenderAssets) -> Result<(Vec<u8>, u32, u32), String> {
+    let atlas = TerrainAtlas::from_render_assets(render)?;
+    Ok((atlas.pixels.into_vec(), atlas.width, atlas.height))
+}
 
 fn write_status(status: &str) {
     let _ = std::fs::write(STATUS_PATH, status.as_bytes());
-}
-
-#[derive(Clone, Copy)]
-struct Material {
-    top: (u8, u8),
-    side: (u8, u8),
-    bottom: (u8, u8),
-}
-
-impl Material {
-    fn from_name(name: &str) -> Self {
-        if name == "minecraft:grass_block" {
-            Self {
-                top: (0, 0),
-                side: (1, 0),
-                bottom: (3, 0),
-            }
-        } else if name.contains("sand") {
-            Self {
-                top: (0, 1),
-                side: (0, 1),
-                bottom: (0, 1),
-            }
-        } else if name.contains("gravel") {
-            Self {
-                top: (1, 1),
-                side: (1, 1),
-                bottom: (1, 1),
-            }
-        } else if name.contains("log") {
-            Self {
-                top: (2, 1),
-                side: (2, 1),
-                bottom: (2, 1),
-            }
-        } else if name.contains("planks") || name.contains("wood") {
-            Self {
-                top: (3, 1),
-                side: (3, 1),
-                bottom: (3, 1),
-            }
-        } else if name.contains("dirt") || name.contains("terracotta") || name.contains("clay") {
-            Self {
-                top: (3, 0),
-                side: (3, 0),
-                bottom: (3, 0),
-            }
-        } else {
-            Self {
-                top: (2, 0),
-                side: (2, 0),
-                bottom: (2, 0),
-            }
-        }
-    }
-
-    fn tile(self, face: Face) -> (u8, u8) {
-        match face {
-            Face::Up => self.top,
-            Face::Down => self.bottom,
-            _ => self.side,
-        }
+    #[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+    for line in status.lines() {
+        log::info!("{line}");
     }
 }
 
-#[derive(Clone, Copy)]
-enum Face {
-    Up,
-    Down,
-    East,
-    West,
-    South,
-    North,
-}
+fn append_status(status: &str) {
+    use std::io::Write as _;
 
-impl Face {
-    const ALL: [Self; 6] = [
-        Self::Up,
-        Self::Down,
-        Self::East,
-        Self::West,
-        Self::South,
-        Self::North,
-    ];
-
-    fn neighbor(self, x: usize, y: usize, z: usize) -> (i32, i32, i32) {
-        match self {
-            Self::Up => (x as i32, y as i32 + 1, z as i32),
-            Self::Down => (x as i32, y as i32 - 1, z as i32),
-            Self::East => (x as i32 + 1, y as i32, z as i32),
-            Self::West => (x as i32 - 1, y as i32, z as i32),
-            Self::South => (x as i32, y as i32, z as i32 + 1),
-            Self::North => (x as i32, y as i32, z as i32 - 1),
-        }
-    }
-
-    fn shade(self) -> u8 {
-        match self {
-            Self::Up => 255,
-            Self::Down => 128,
-            Self::East => 220,
-            Self::West => 178,
-            Self::South => 205,
-            Self::North => 190,
-        }
-    }
-
-    fn corners(self, x: usize, y: i32, z: usize) -> [[f32; 3]; 4] {
-        let (x, z) = (x as f32, z as f32);
-        let (y0, y1) = (y as f32, y as f32 + 1.0);
-        match self {
-            Self::Up => [
-                [x, y1, z],
-                [x + 1.0, y1, z],
-                [x + 1.0, y1, z + 1.0],
-                [x, y1, z + 1.0],
-            ],
-            Self::Down => [
-                [x, y0, z + 1.0],
-                [x + 1.0, y0, z + 1.0],
-                [x + 1.0, y0, z],
-                [x, y0, z],
-            ],
-            Self::East => [
-                [x + 1.0, y0, z + 1.0],
-                [x + 1.0, y1, z + 1.0],
-                [x + 1.0, y1, z],
-                [x + 1.0, y0, z],
-            ],
-            Self::West => [[x, y0, z], [x, y1, z], [x, y1, z + 1.0], [x, y0, z + 1.0]],
-            Self::South => [
-                [x + 1.0, y0, z + 1.0],
-                [x + 1.0, y1, z + 1.0],
-                [x, y1, z + 1.0],
-                [x, y0, z + 1.0],
-            ],
-            Self::North => [[x, y0, z], [x, y1, z], [x + 1.0, y1, z], [x + 1.0, y0, z]],
-        }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(STATUS_PATH)
+    else {
+        return;
+    };
+    let _ = file.write_all(status.as_bytes());
+    #[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+    for line in status.lines() {
+        log::error!("{line}");
     }
 }
 
 struct WorldContext {
     worker: GeneratorWorker,
-    opaque: Vec<bool>,
-    materials: Vec<Material>,
-    placement_state: u32,
-    edits: HashMap<(i32, i32, i32), u32>,
-    edits_path: PathBuf,
-    seed: i64,
-    profile: u32,
+    assets: Assets,
+    render: RenderAssets,
+    tables: MeshTables,
+    biomes: Biomes,
+    zoom: BiomeZoom,
     spawn: [i32; 2],
-    terrain_atlas: Option<Box<[u8]>>,
+    spawn_surface_y: Option<i32>,
+    terrain_atlas: TerrainAtlas,
 }
 
 struct WorldChunk {
     vertices: Box<[TerrainVertex]>,
-    heights: Box<[i16]>,
     blocks: Box<[u32]>,
-    opaque: Box<[bool]>,
-    materials: Box<[Material]>,
+    biomes: Box<[u16]>,
     min_y: i32,
     height: usize,
     diameter: usize,
     chunk_x: i32,
     chunk_z: i32,
+    diagnostic_surface_y: Option<i32>,
+}
+
+/// A section view into the world's region-sized, y/z/x block buffer.
+/// The canonical mesher borrows this view and asks for only the runs it needs.
+struct RegionSectionView<'a> {
+    blocks: &'a [u32],
+    diameter: usize,
+    min_y: i32,
+    height: usize,
+    chunk_offset_x: usize,
+    chunk_offset_z: usize,
+    section_y: i32,
+}
+
+impl MeshSectionView for RegionSectionView<'_> {
+    fn is_uniform_air(&self) -> bool {
+        for y in 0..16 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    if block_state(
+                        self.blocks,
+                        self.diameter,
+                        self.min_y,
+                        self.height,
+                        (self.chunk_offset_x + x) as i32,
+                        self.section_y + y,
+                        (self.chunk_offset_z + z) as i32,
+                    ) != 0
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn unpack(&self, out: &mut [u32; SECTION_VOLUME]) {
+        self.get_run(0, out);
+    }
+
+    fn get_run(&self, at: usize, out: &mut [u32]) {
+        for (offset, block) in out.iter_mut().enumerate() {
+            let section_index = at + offset;
+            if section_index >= SECTION_VOLUME {
+                *block = 0;
+                continue;
+            }
+            let y = section_index / 256;
+            let z = section_index / 16 % 16;
+            let x = section_index % 16;
+            *block = block_state(
+                self.blocks,
+                self.diameter,
+                self.min_y,
+                self.height,
+                (self.chunk_offset_x + x) as i32,
+                self.section_y + y as i32,
+                (self.chunk_offset_z + z) as i32,
+            );
+        }
+    }
+
+    fn copy_light_run(&self, _at: usize, out: &mut [u8]) {
+        // Temporary bridge lighting: generated sections are treated as full sky
+        // with no block light until Horizon's light engine is wired into this view.
+        out.fill(0xF0);
+    }
+}
+
+/// One borrowed chunk column inside a larger runtime region buffer.
+struct RegionChunkView<'a> {
+    blocks: &'a [u32],
+    biomes: &'a [u16],
+    diameter: usize,
+    min_y: i32,
+    height: usize,
+    chunk_x: i32,
+    chunk_z: i32,
+    chunk_offset_x: usize,
+    chunk_offset_z: usize,
+    sections: Vec<RegionSectionView<'a>>,
+}
+
+impl<'a> RegionChunkView<'a> {
+    fn new(chunk: &'a WorldChunk, chunk_x: i32, chunk_z: i32) -> Self {
+        let chunk_offset_x = ((chunk_x - chunk.chunk_x) as usize) * 16;
+        let chunk_offset_z = ((chunk_z - chunk.chunk_z) as usize) * 16;
+        let sections = (0..chunk.height / 16)
+            .map(|section| RegionSectionView {
+                blocks: &chunk.blocks,
+                diameter: chunk.diameter,
+                min_y: chunk.min_y,
+                height: chunk.height,
+                chunk_offset_x,
+                chunk_offset_z,
+                section_y: chunk.min_y + (section * 16) as i32,
+            })
+            .collect();
+        Self {
+            blocks: &chunk.blocks,
+            biomes: &chunk.biomes,
+            diameter: chunk.diameter,
+            min_y: chunk.min_y,
+            height: chunk.height,
+            chunk_x,
+            chunk_z,
+            chunk_offset_x,
+            chunk_offset_z,
+            sections,
+        }
+    }
+
+    fn quart_biome(&self, x: i32, y: i32, z: i32) -> u16 {
+        let quart_diameter = self.diameter / 4;
+        let quart_height = self.height / 4;
+        if quart_diameter == 0 || quart_height == 0 {
+            return 0;
+        }
+        let qx = (self.chunk_offset_x / 4 + ((x & 15) as usize / 4)).min(quart_diameter - 1);
+        let qz = (self.chunk_offset_z / 4 + ((z & 15) as usize / 4)).min(quart_diameter - 1);
+        let qy = ((y - self.min_y) >> 2).clamp(0, quart_height as i32 - 1) as usize;
+        self.biomes
+            .get((qy * quart_diameter + qz) * quart_diameter + qx)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+impl MeshChunk for RegionChunkView<'_> {
+    fn x(&self) -> i32 {
+        self.chunk_x
+    }
+
+    fn z(&self) -> i32 {
+        self.chunk_z
+    }
+
+    fn min_y(&self) -> i32 {
+        self.min_y
+    }
+
+    fn section_at(&self, world_y: i32) -> Result<&dyn MeshSectionView, u8> {
+        if world_y < self.min_y {
+            return Err(0);
+        }
+        let relative_y = world_y - self.min_y;
+        let section = usize::try_from(relative_y / 16).ok();
+        section
+            .and_then(|index| self.sections.get(index))
+            .map(|section| section as &dyn MeshSectionView)
+            .ok_or(0xF0)
+    }
+
+    fn get(&self, x: i32, y: i32, z: i32) -> u32 {
+        block_state(
+            self.blocks,
+            self.diameter,
+            self.min_y,
+            self.height,
+            (self.chunk_offset_x as i32) + (x & 15),
+            y,
+            (self.chunk_offset_z as i32) + (z & 15),
+        )
+    }
+
+    fn light(&self, _x: i32, y: i32, _z: i32) -> u8 {
+        if y < self.min_y {
+            0
+        } else {
+            0xF0
+        }
+    }
+
+    fn biome(&self, x: i32, y: i32, z: i32) -> u16 {
+        self.quart_biome(x, y, z)
+    }
 }
 
 static WORLD: OnceLock<Mutex<Option<WorldContext>>> = OnceLock::new();
@@ -212,240 +417,47 @@ fn pending_region() -> &'static Mutex<Option<JoinHandle<Result<usize, String>>>>
     PENDING_REGION.get_or_init(|| Mutex::new(None))
 }
 
-fn edits_path(resources: &Path, seed: i64, profile: u32) -> PathBuf {
-    let app_dir = resources
-        .parent()
-        .and_then(Path::parent)
-        .unwrap_or(resources);
-    app_dir
-        .join("saves")
-        .join(format!("world-{seed}-{profile}"))
-        .join("wiiu-edits")
-        .join("region")
-}
-
-fn edit_chunk_tag(
-    chunk: ChunkPos,
-    edits: impl Iterator<Item = ((i32, i32, i32), u32)>,
-    seed: i64,
-    profile: u32,
-) -> NamedTag {
-    let mut entries: Vec<_> = edits.collect();
-    entries.sort_unstable_by_key(|(position, _)| *position);
-    let edit_list = entries
-        .into_iter()
-        .map(|((x, y, z), state)| {
-            Tag::compound([
-                ("x", Tag::Int(x)),
-                ("y", Tag::Int(y)),
-                ("z", Tag::Int(z)),
-                ("state", Tag::Int(state as i32)),
-            ])
-        })
-        .collect();
-    NamedTag {
-        name: "HorizonWiiUEdits".into(),
-        tag: Tag::compound([
-            ("DataVersion", Tag::Int(horizon_world::DATA_VERSION)),
-            ("xPos", Tag::Int(chunk.x)),
-            ("zPos", Tag::Int(chunk.z)),
-            ("seed", Tag::Long(seed)),
-            ("profile", Tag::Int(profile as i32)),
-            ("edits", Tag::List(edit_list)),
-        ]),
-    }
-}
-
-fn decode_edit_chunk(
-    record: &NamedTag,
-    chunk: ChunkPos,
-    seed: i64,
-    profile: u32,
-    opaque: &[bool],
-    edits: &mut HashMap<(i32, i32, i32), u32>,
-) -> Result<(), String> {
-    let read_int = |tag: &Tag, name| match tag.get(name) {
-        Some(Tag::Int(value)) => Ok(*value),
-        _ => Err(format!("world edit chunk is missing {name}")),
-    };
-    if read_int(&record.tag, "DataVersion")? != horizon_world::DATA_VERSION
-        || read_int(&record.tag, "xPos")? != chunk.x
-        || read_int(&record.tag, "zPos")? != chunk.z
-        || record.tag.get("seed") != Some(&Tag::Long(seed))
-        || read_int(&record.tag, "profile")? != profile as i32
-    {
-        return Err("world edit chunk identity or version does not match".to_owned());
-    }
-    let Some(Tag::List(records)) = record.tag.get("edits") else {
-        return Err("world edit chunk has no edit list".to_owned());
-    };
-    for record in records {
-        let position = (
-            read_int(record, "x")?,
-            read_int(record, "y")?,
-            read_int(record, "z")?,
-        );
-        let state = read_int(record, "state")? as u32;
-        if position.0.div_euclid(16) != chunk.x || position.2.div_euclid(16) != chunk.z {
-            return Err("world edit lies outside its saved chunk".to_owned());
-        }
-        if state != 0 && !is_opaque(state, opaque) {
-            return Err(format!("world edit save contains invalid state {state}"));
-        }
-        if edits.insert(position, state).is_some() {
-            return Err("world edit save contains duplicate coordinates".to_owned());
-        }
-        if edits.len() > MAX_SAVED_EDITS {
-            return Err(format!("world edit save exceeds {MAX_SAVED_EDITS} edits"));
-        }
-    }
-    Ok(())
-}
-
-fn load_edits(
-    path: &Path,
-    seed: i64,
-    profile: u32,
-    opaque: &[bool],
-) -> Result<HashMap<(i32, i32, i32), u32>, String> {
-    let mut edits = HashMap::new();
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(edits),
-        Err(error) => {
-            return Err(format!(
-                "inspect world edit directory {}: {error}",
-                path.display()
-            ));
-        }
-    };
-    if !metadata.is_dir() {
-        return Err(format!(
-            "world edit path {} is not a directory",
-            path.display()
-        ));
-    }
-    let files = std::fs::read_dir(path)
-        .map_err(|error| format!("read world edit directory {}: {error}", path.display()))?;
-    for entry in files {
-        let entry = entry.map_err(|error| format!("read world edit directory entry: {error}"))?;
-        if entry
-            .path()
-            .extension()
-            .is_none_or(|extension| extension != "mca")
-        {
-            continue;
-        }
-        let mut region = RegionFile::open(entry.path()).map_err(|error| {
-            format!("open world edit region {}: {error}", entry.path().display())
-        })?;
-        for (chunk, _) in region.chunks().collect::<Vec<_>>() {
-            let record = region
-                .read(chunk)
-                .map_err(|error| format!("read world edit chunk {chunk:?}: {error}"))?
-                .ok_or_else(|| format!("world edit region lost chunk {chunk:?}"))?;
-            let tag = record
-                .nbt(Limits::saved())
-                .map_err(|error| format!("decode world edit chunk {chunk:?}: {error}"))?;
-            decode_edit_chunk(&tag, chunk, seed, profile, opaque, &mut edits)?;
-        }
-    }
-    Ok(edits)
-}
-
-fn save_chunk_edits(
-    path: &Path,
-    edits: &HashMap<(i32, i32, i32), u32>,
-    chunk: ChunkPos,
-    seed: i64,
-    profile: u32,
-) -> Result<(), String> {
-    let chunk_edits = edits.iter().filter_map(|(&position, &state)| {
-        (position.0.div_euclid(16) == chunk.x && position.2.div_euclid(16) == chunk.z)
-            .then_some((position, state))
-    });
-    let chunk_edits: Vec<_> = chunk_edits.collect();
-    if chunk_edits.is_empty() {
-        return Ok(());
-    }
-    if edits.len() > MAX_SAVED_EDITS {
-        return Err(format!(
-            "world has {} edits, save limit is {MAX_SAVED_EDITS}",
-            edits.len()
-        ));
-    }
-    std::fs::create_dir_all(path)
-        .map_err(|error| format!("create world edit directory {}: {error}", path.display()))?;
-    let region_path = path.join(format!("r.{}.{}.mca", chunk.x >> 5, chunk.z >> 5));
-    let mut region = RegionFile::open_writable(region_path, true)
-        .map_err(|error| format!("open world edit region: {error}"))?;
-    let root = edit_chunk_tag(chunk, chunk_edits.into_iter(), seed, profile);
-    let record = ChunkRecord::from_nbt(&root, Compression::Zlib, 0, Limits::saved())
-        .map_err(|error| format!("encode world edit chunk {chunk:?}: {error}"))?;
-    region
-        .write(chunk, &record)
-        .and_then(|()| region.sync())
-        .map_err(|error| format!("write world edit chunk {chunk:?}: {error}"))
-}
-
-const PROFILE_OVERWORLD: u32 = 0;
-const PROFILE_SUPERFLAT: u32 = 1;
+/// Renderer diagnostic profile using Horizon's overworld generator without structures.
+const PROFILE_RENDER_DIAGNOSTIC_OVERWORLD: u32 = 0;
+/// Deterministic, reduced Horizon flat profile for renderer bring-up only.
+const PROFILE_RENDER_DIAGNOSTIC_FLAT: u32 = 1;
 
 fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, String> {
-    let terrain_atlas = match std::fs::read(root.join("wiiu-terrain-atlas.rgba")) {
-        Ok(bytes) if bytes.len() == TERRAIN_ATLAS_BYTES => Some(bytes.into_boxed_slice()),
-        Ok(bytes) => {
-            return Err(format!(
-                "prepared Wii U terrain atlas has {} bytes, expected {TERRAIN_ATLAS_BYTES}",
-                bytes.len()
-            ));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("prepared Wii U terrain atlas: {error}")),
-    };
-    let (registry, flags) = load_registry_with_flags(root)
-        .map_err(|error| format!("Horizon block registry: {error}"))?;
+    write_status("Horizon asset registry load started\n");
+    let assets = Assets::load(root).map_err(|error| format!("Horizon assets: {error}"))?;
+    let registry = assets.registry;
     write_status(&format!("registry loaded: {} states\n", registry.len()));
-    let registry: &'static BlockRegistry = Box::leak(Box::new(registry));
-    let placement_state = (0..registry.len())
-        .find(|&index| {
-            registry
-                .state(BlockStateId(index as u32))
-                .is_some_and(|state| state.name == "minecraft:dirt")
+    let render = assets
+        .reload_for_terrain_with_progress(root, |progress| {
+            let state = if progress.is_complete() {
+                "complete"
+            } else {
+                "started"
+            };
+            write_status(&format!(
+                "terrain asset phase {} {state}\n",
+                progress.phase().name()
+            ));
         })
-        .ok_or_else(|| "Horizon registry has no minecraft:dirt state".to_owned())?
-        as u32;
-    let materials = (0..registry.len())
-        .map(|index| {
-            registry
-                .state(BlockStateId(index as u32))
-                .map(|state| Material::from_name(&state.name))
-                .ok_or_else(|| format!("missing Horizon block state {index}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    write_status("registry material map loaded\n");
-    let opaque: Vec<bool> = flags
-        .into_iter()
-        .map(|(is_air, has_fluid)| !is_air && !has_fluid)
-        .collect();
-    let edits_path = edits_path(root, seed, profile);
-    write_status("world edit load started\n");
-    let edits = match load_edits(&edits_path, seed, profile, &opaque) {
-        Ok(edits) => {
-            write_status(&format!("world edits loaded: {}\n", edits.len()));
-            edits
-        }
-        Err(error) => {
-            write_status(&format!("world edits ignored: {error}\n"));
-            HashMap::new()
-        }
-    };
+        .map_err(|error| format!("Horizon block models and sprites: {error}"))?;
+    let terrain_atlas = TerrainAtlas::from_render_assets(&render)?;
+    let facts = BlockFacts::load(root, registry)
+        .map_err(|error| format!("Horizon block facts: {error}"))?;
+    let visibility = load_visibility(root, registry)
+        .map_err(|error| format!("Horizon block model visibility: {error}"))?;
+    let tables = MeshTables::new(&assets, &render, &facts, visibility)
+        .map_err(|error| format!("Horizon terrain mesh tables: {error}"))?;
+    let biomes = Biomes::load(root).map_err(|error| format!("Horizon biome colors: {error}"))?;
+    write_status(&format!(
+        "Horizon terrain assets ready: {} sprite layers, {}x{} atlas\n",
+        render.texture_layers, terrain_atlas.width, terrain_atlas.height
+    ));
     let data = GeneratorData::load(&root.join("worldgen"), registry)
         .map_err(|error| format!("Horizon worldgen data: {error}"))?;
     write_status("worldgen tables loaded\n");
     let generator = match profile {
-        PROFILE_OVERWORLD => OverworldGenerator::without_structures(data, seed),
-        PROFILE_SUPERFLAT => OverworldGenerator::flat(
+        PROFILE_RENDER_DIAGNOSTIC_OVERWORLD => OverworldGenerator::without_structures(data, seed),
+        PROFILE_RENDER_DIAGNOSTIC_FLAT => OverworldGenerator::flat(
             data,
             seed,
             &FlatSettings {
@@ -461,7 +473,7 @@ fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, Stri
             },
             false,
         ),
-        _ => return Err(format!("unknown Horizon world profile {profile}")),
+        _ => return Err(format!("unknown renderer diagnostic profile {profile}")),
     }
     .map_err(|error| format!("Horizon world generator: {error}"))?;
     write_status("spawn search started\n");
@@ -473,51 +485,20 @@ fn load_world(root: &Path, seed: i64, profile: u32) -> Result<WorldContext, Stri
 
     Ok(WorldContext {
         worker,
-        opaque,
-        materials,
-        placement_state,
-        edits,
-        edits_path,
-        seed,
-        profile,
+        assets,
+        render,
+        tables,
+        biomes,
+        zoom: BiomeZoom::new(obfuscate_seed(seed)),
         spawn,
+        spawn_surface_y: None,
         terrain_atlas,
     })
 }
 
-fn is_opaque(id: u32, opaque: &[bool]) -> bool {
-    opaque.get(id as usize).copied().unwrap_or(false)
-}
-
-fn emit_face(
-    vertices: &mut Vec<TerrainVertex>,
-    material: Material,
-    face: Face,
-    x: usize,
-    y: i32,
-    z: usize,
-) {
-    let tile = material.tile(face);
-    // The Wii U atlas contains four 16x16 tiles per row. Sample texel centers
-    // so point filtering never crosses into a neighboring block texture.
-    let inset_u = 0.5 / 64.0;
-    let inset_v = 0.5 / 32.0;
-    let scale_u = 15.0 / 64.0;
-    let scale_v = 15.0 / 32.0;
-    let uv = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-    let shade = u32::from(face.shade());
-    let color = 0xFF00_0000 | shade * 0x0001_0101;
-    for (position, corner_uv) in face.corners(x, y, z).into_iter().zip(uv) {
-        let uv = [
-            f32::from(tile.0) * 0.25 + inset_u + corner_uv[0] * scale_u,
-            f32::from(tile.1) * 0.5 + inset_v + corner_uv[1] * scale_v,
-        ];
-        vertices.push(TerrainVertex::new(position, uv, 0, color, 0x00F0));
-    }
-}
-
 struct ChunkBlocks {
     states: Vec<u32>,
+    biomes: Vec<u16>,
     min_y: i32,
     height: usize,
 }
@@ -533,16 +514,28 @@ fn proto_blocks(proto: &ProtoChunk) -> Result<ChunkBlocks, String> {
 
     let height = section_height as usize;
     let mut states = Vec::with_capacity(height * COLUMN_COUNT);
+    let mut biomes = Vec::with_capacity(height / 4 * 16);
     let mut section = [0u32; SECTION_VOLUME];
     for section_y in (min_y..min_y + section_height).step_by(16) {
         if !proto.terrain.section_states(section_y, &mut section) {
             return Err(format!("Horizon chunk has no section at y={section_y}"));
         }
         states.extend_from_slice(&section);
+        for qy in 0..4 {
+            for qz in 0..4 {
+                for qx in 0..4 {
+                    let id = proto.biome_id_at(qx * 4, section_y + qy * 4, qz * 4).0;
+                    biomes.push(u16::try_from(id).map_err(|_| {
+                        format!("Horizon biome id {id} exceeds terrain mesh storage")
+                    })?);
+                }
+            }
+        }
     }
 
     Ok(ChunkBlocks {
         states,
+        biomes,
         min_y,
         height,
     })
@@ -581,165 +574,102 @@ fn block_state(
         .unwrap_or(0)
 }
 
-fn surface_heights(
-    blocks: &[u32],
-    diameter: usize,
-    min_y: i32,
-    height: usize,
-    opaque: &[bool],
-) -> Box<[i16]> {
-    let mut heights = vec![min_y as i16; diameter * diameter];
-    for z in 0..diameter {
-        for x in 0..diameter {
-            for y in (min_y..min_y + height as i32).rev() {
-                let state = block_state(blocks, diameter, min_y, height, x as i32, y, z as i32);
-                if is_opaque(state, opaque) {
-                    heights[z * diameter + x] = (y + 1) as i16;
-                    break;
-                }
-            }
-        }
+fn mesh_world_chunk(
+    chunk: &WorldChunk,
+    context: &WorldContext,
+) -> Result<Box<[TerrainVertex]>, String> {
+    if chunk.diameter % 16 != 0 || chunk.height % 16 != 0 {
+        return Err(format!(
+            "Horizon mesh bounds are not section aligned: diameter {}, height {}",
+            chunk.diameter, chunk.height
+        ));
     }
-    heights.into_boxed_slice()
-}
-
-fn mesh_blocks(
-    blocks: &[u32],
-    diameter: usize,
-    min_y: i32,
-    height: usize,
-    opaque: &[bool],
-    materials: &[Material],
-) -> Box<[TerrainVertex]> {
-    let state_at =
-        |x: i32, y: i32, z: i32| -> u32 { block_state(blocks, diameter, min_y, height, x, y, z) };
-
-    let mut vertices = Vec::with_capacity(24 * 1024);
-    for y in min_y..min_y + height as i32 {
-        for z in 0..diameter {
-            for x in 0..diameter {
-                let state = state_at(x as i32, y, z as i32);
-                if !is_opaque(state, opaque) {
-                    continue;
-                }
-                let Some(material) = materials.get(state as usize).copied() else {
-                    continue;
-                };
-                for face in Face::ALL {
-                    let (nx, ny, nz) = face.neighbor(x, (y - min_y) as usize, z);
-                    let neighbor = (nx, ny + min_y, nz);
-                    if !is_opaque(state_at(neighbor.0, neighbor.1, neighbor.2), opaque) {
-                        emit_face(&mut vertices, material, face, x, y, z);
-                    }
-                }
-            }
-        }
+    let expected_blocks = chunk
+        .height
+        .checked_mul(chunk.diameter)
+        .and_then(|count| count.checked_mul(chunk.diameter))
+        .ok_or_else(|| "Horizon region block count overflow".to_owned())?;
+    let quart_diameter = chunk.diameter / 4;
+    let expected_biomes = (chunk.height / 4)
+        .checked_mul(quart_diameter)
+        .and_then(|count| count.checked_mul(quart_diameter))
+        .ok_or_else(|| "Horizon region biome count overflow".to_owned())?;
+    if chunk.blocks.len() != expected_blocks || chunk.biomes.len() != expected_biomes {
+        return Err(format!(
+            "Horizon region storage has {} blocks/{} biomes, expected {expected_blocks}/{expected_biomes}",
+            chunk.blocks.len(),
+            chunk.biomes.len()
+        ));
     }
-    vertices.into_boxed_slice()
-}
-
-fn apply_chunk_edits(
-    blocks: &mut [u32],
-    chunk_x: i32,
-    chunk_z: i32,
-    min_y: i32,
-    height: usize,
-    edits: &HashMap<(i32, i32, i32), u32>,
-) {
-    let origin_x = chunk_x.saturating_mul(16);
-    let origin_z = chunk_z.saturating_mul(16);
-    for (&(x, y, z), &state) in edits {
-        let (Some(local_x), Some(local_z)) = (x.checked_sub(origin_x), z.checked_sub(origin_z))
-        else {
-            continue;
-        };
-        if let Some(index) = block_index(16, min_y, height, local_x, y, local_z) {
-            blocks[index] = state;
-        }
-    }
-}
-
-fn set_block_data(
-    blocks: &mut [u32],
-    diameter: usize,
-    min_y: i32,
-    height: usize,
-    x: i32,
-    y: i32,
-    z: i32,
-    state: u32,
-) -> Option<u32> {
-    let index = block_index(diameter, min_y, height, x, y, z)?;
-    let old = *blocks.get(index)?;
-    blocks[index] = state;
-    Some(old)
-}
-
-fn floor_block(value: f32) -> Option<i32> {
-    if !value.is_finite() || value < i32::MIN as f32 || value >= i32::MAX as f32 {
-        return None;
-    }
-    let truncated = value as i32;
-    Some(if value < truncated as f32 {
-        truncated - 1
-    } else {
-        truncated
-    })
-}
-
-fn player_aabb_clear(
-    blocks: &[u32],
-    diameter: usize,
-    min_y: i32,
-    world_origin_x: i32,
-    world_origin_z: i32,
-    height: usize,
-    opaque: &[bool],
-    center_x: f32,
-    eye_y: f32,
-    center_z: f32,
-    half_width: f32,
-    body_height: f32,
-) -> bool {
-    if ![center_x, eye_y, center_z, half_width, body_height]
-        .iter()
-        .all(|value| value.is_finite())
-        || half_width <= 0.0
-        || body_height <= 0.0
-        || body_height <= 1.62
-    {
-        return false;
-    }
-    let epsilon = 0.001;
-    let min_x = center_x - world_origin_x as f32 - half_width + epsilon;
-    let max_x = center_x - world_origin_x as f32 + half_width - epsilon;
-    let min_z = center_z - world_origin_z as f32 - half_width + epsilon;
-    let max_z = center_z - world_origin_z as f32 + half_width - epsilon;
-    let min_body_y = eye_y - 1.62 + epsilon;
-    let max_body_y = eye_y + body_height - 1.62 - epsilon;
-    let (Some(min_x), Some(max_x), Some(min_z), Some(max_z), Some(min_body_y), Some(max_body_y)) = (
-        floor_block(min_x),
-        floor_block(max_x),
-        floor_block(min_z),
-        floor_block(max_z),
-        floor_block(min_body_y),
-        floor_block(max_body_y),
-    ) else {
-        return false;
+    let chunks_per_axis = chunk.diameter / 16;
+    let chunk_end_x = chunk
+        .chunk_x
+        .checked_add(chunks_per_axis as i32)
+        .ok_or_else(|| "Horizon region x range overflow while meshing".to_owned())?;
+    let chunk_end_z = chunk
+        .chunk_z
+        .checked_add(chunks_per_axis as i32)
+        .ok_or_else(|| "Horizon region z range overflow while meshing".to_owned())?;
+    let views: Vec<_> = (chunk.chunk_z..chunk_end_z)
+        .flat_map(|z| (chunk.chunk_x..chunk_end_x).map(move |x| (x, z)))
+        .map(|(x, z)| RegionChunkView::new(chunk, x, z))
+        .collect();
+    let mut mesher = Mesher {
+        nether_shading: false,
+        shader_pack_lighting: false,
+        separate_ao: false,
+        shader_pack: false,
+        assets: &context.assets,
+        render: &context.render,
+        tables: &context.tables,
+        biomes: &context.biomes,
+        visibility: context.tables.visibility.clone(),
+        zoom: context.zoom,
+        blend_radius: 0,
+        smooth_lighting: true,
+        cutout_leaves: true,
+        translucent_layers: &context.render.translucent_layers,
+        leaf_culling: LeafCullingMode::Off,
     };
-    for y in min_body_y..=max_body_y {
-        for z in min_z..=max_z {
-            for x in min_x..=max_x {
-                if is_opaque(
-                    block_state(blocks, diameter, min_y, height, x, y, z),
-                    opaque,
-                ) {
-                    return false;
+    let mut scratch = MeshScratch::default();
+    let mut mesh = SectionMesh::default();
+    let mut vertices = Vec::with_capacity(chunk.diameter * chunk.diameter * 12);
+    let sections = chunk.height / 16;
+    for center_z in 0..chunks_per_axis {
+        for center_x in 0..chunks_per_axis {
+            let center_index = center_z * chunks_per_axis + center_x;
+            let center = &views[center_index];
+            let region: [[Option<&RegionChunkView<'_>>; 3]; 3] = std::array::from_fn(|dz| {
+                std::array::from_fn(|dx| {
+                    let x = center_x as isize + dx as isize - 1;
+                    let z = center_z as isize + dz as isize - 1;
+                    if x < 0
+                        || z < 0
+                        || x >= chunks_per_axis as isize
+                        || z >= chunks_per_axis as isize
+                    {
+                        None
+                    } else {
+                        Some(&views[z as usize * chunks_per_axis + x as usize])
+                    }
+                })
+            });
+            for section_y in 0..sections {
+                mesh = mesher.mesh_reusing(&region, section_y as i32, mesh, &mut scratch);
+                let section_base_y = chunk.min_y + (section_y * 16) as i32;
+                let region_x = (center.chunk_x - chunk.chunk_x) * 16;
+                let region_z = (center.chunk_z - chunk.chunk_z) * 16;
+                for mut vertex in mesh.solid.iter().copied() {
+                    vertex.pos[0] += region_x as f32;
+                    vertex.pos[1] += section_base_y as f32;
+                    vertex.pos[2] += region_z as f32;
+                    context.terrain_atlas.remap_vertex(&mut vertex)?;
+                    vertices.push(vertex);
                 }
             }
         }
     }
-    true
+    Ok(vertices.into_boxed_slice())
 }
 
 fn generate_chunk_blocks(
@@ -747,148 +677,46 @@ fn generate_chunk_blocks(
     chunk_x: i32,
     chunk_z: i32,
 ) -> Result<ChunkBlocks, String> {
-    let position = horizon_core::position::ChunkPos::new(chunk_x, chunk_z);
+    let position = ChunkPos::new(chunk_x, chunk_z);
     write_status(&format!("chunk generation started: {chunk_x},{chunk_z}\n"));
     let proto = context
         .worker
         .generate_proto(position)
         .map_err(|error| format!("Horizon chunk generation: {error}"))?;
     write_status("proto-chunk generated\n");
-    let mut chunk = proto_blocks(&proto)?;
-    apply_chunk_edits(
-        &mut chunk.states,
-        chunk_x,
-        chunk_z,
-        chunk.min_y,
-        chunk.height,
-        &context.edits,
-    );
-    Ok(chunk)
+    if chunk_x == context.spawn[0].div_euclid(16) && chunk_z == context.spawn[1].div_euclid(16) {
+        let surface_y = proto.surface_height(context.spawn[0], context.spawn[1]);
+        context.spawn_surface_y = Some(surface_y);
+        write_status(&format!(
+            "diagnostic spawn surface height captured: {surface_y}\n"
+        ));
+    }
+    proto_blocks(&proto)
 }
 
 fn world_chunk_from_blocks(
     blocks: Vec<u32>,
+    biomes: Vec<u16>,
     min_y: i32,
     height: usize,
     diameter: usize,
     chunk_x: i32,
     chunk_z: i32,
     context: &WorldContext,
-) -> WorldChunk {
-    let heights = surface_heights(&blocks, diameter, min_y, height, &context.opaque);
-    let vertices = mesh_blocks(
-        &blocks,
-        diameter,
-        min_y,
-        height,
-        &context.opaque,
-        &context.materials,
-    );
-    WorldChunk {
-        vertices,
-        heights,
+) -> Result<WorldChunk, String> {
+    let mut chunk = WorldChunk {
+        vertices: Vec::new().into_boxed_slice(),
         blocks: blocks.into_boxed_slice(),
-        opaque: context.opaque.clone().into_boxed_slice(),
-        materials: context.materials.clone().into_boxed_slice(),
+        biomes: biomes.into_boxed_slice(),
         min_y,
         height,
         diameter,
         chunk_x,
         chunk_z,
-    }
-}
-
-fn raycast_blocks(
-    blocks: &[u32],
-    diameter: usize,
-    min_y: i32,
-    height: usize,
-    opaque: &[bool],
-    origin: [f32; 3],
-    direction: [f32; 3],
-    max_distance: f32,
-) -> Option<[i32; 6]> {
-    if !origin
-        .iter()
-        .chain(direction.iter())
-        .all(|value| value.is_finite())
-        || !max_distance.is_finite()
-        || max_distance <= 0.0
-    {
-        return None;
-    }
-    let length =
-        (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
-            .sqrt();
-    if length <= f32::EPSILON {
-        return None;
-    }
-    let direction = [
-        direction[0] / length,
-        direction[1] / length,
-        direction[2] / length,
-    ];
-    let mut cell = [0i32; 3];
-    for axis in 0..3 {
-        cell[axis] = floor_block(origin[axis])?;
-    }
-
-    let step = direction.map(|component| {
-        if component > 0.0 {
-            1
-        } else if component < 0.0 {
-            -1
-        } else {
-            0
-        }
-    });
-    let mut next = [f32::INFINITY; 3];
-    let mut delta = [f32::INFINITY; 3];
-    for axis in 0..3 {
-        if step[axis] != 0 {
-            let boundary = if step[axis] > 0 {
-                cell[axis] as f32 + 1.0
-            } else {
-                cell[axis] as f32
-            };
-            next[axis] = (boundary - origin[axis]) / direction[axis];
-            delta[axis] = 1.0 / direction[axis].abs();
-        }
-    }
-
-    if is_opaque(
-        block_state(blocks, diameter, min_y, height, cell[0], cell[1], cell[2]),
-        opaque,
-    ) {
-        return Some([cell[0], cell[1], cell[2], cell[0], cell[1], cell[2]]);
-    }
-    loop {
-        let axis = if next[0] <= next[1] && next[0] <= next[2] {
-            0
-        } else if next[1] <= next[2] {
-            1
-        } else {
-            2
-        };
-        let distance = next[axis];
-        if !distance.is_finite() || distance > max_distance {
-            return None;
-        }
-        let previous = cell;
-        cell[axis] += step[axis];
-        next[axis] += delta[axis];
-        let state = block_state(blocks, diameter, min_y, height, cell[0], cell[1], cell[2]);
-        if is_opaque(state, opaque) {
-            return Some([
-                cell[0],
-                cell[1],
-                cell[2],
-                previous[0],
-                previous[1],
-                previous[2],
-            ]);
-        }
-    }
+        diagnostic_surface_y: context.spawn_surface_y,
+    };
+    chunk.vertices = mesh_world_chunk(&chunk, context)?;
+    Ok(chunk)
 }
 
 fn copy_error(error: &str, output: *mut c_char, capacity: u32) {
@@ -918,6 +746,8 @@ pub extern "C" fn horizon_wiiu_world_init(
     error_out: *mut c_char,
     error_capacity: u32,
 ) -> i32 {
+    #[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+    horizon_client_platform::logging::init(Path::new(APP_HOME_PATH), "Render thread");
     write_status("world init entered\n");
     if resources.is_null() || spawn_out.is_null() {
         copy_error("null world-init argument", error_out, error_capacity);
@@ -939,7 +769,7 @@ pub extern "C" fn horizon_wiiu_world_init(
             Ok(context) => *loaded = Some(context),
             Err(error) => {
                 copy_error(&error, error_out, error_capacity);
-                write_status(&format!("world init failed: {error}\n"));
+                append_status(&format!("world init failed: {error}\n"));
                 return 0;
             }
         }
@@ -960,8 +790,9 @@ pub extern "C" fn horizon_wiiu_world_init(
     1
 }
 
-/// Generate one actual Horizon overworld proto-chunk and convert its runtime
-/// state IDs to visible opaque block faces for GX2. Fluids are omitted for now.
+/// Generate one actual Horizon proto-chunk and mesh it with Horizon's terrain
+/// mesher. This bridge exports the solid/cutout pass; translucent output awaits
+/// a matching GX2 pass.
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_world_generate_chunk(
     chunk_x: i32,
@@ -989,6 +820,7 @@ pub extern "C" fn horizon_wiiu_world_generate_chunk(
     };
     let world_chunk = world_chunk_from_blocks(
         chunk.states,
+        chunk.biomes,
         chunk.min_y,
         chunk.height,
         16,
@@ -996,20 +828,15 @@ pub extern "C" fn horizon_wiiu_world_generate_chunk(
         chunk_z,
         context,
     );
-    let min_height = world_chunk
-        .heights
-        .iter()
-        .min()
-        .copied()
-        .unwrap_or_default();
-    let max_height = world_chunk
-        .heights
-        .iter()
-        .max()
-        .copied()
-        .unwrap_or_default();
+    let world_chunk = match world_chunk {
+        Ok(chunk) => chunk,
+        Err(error) => {
+            copy_error(&error, error_out, error_capacity);
+            return ptr::null_mut();
+        }
+    };
     write_status(&format!(
-        "chunk meshed: {chunk_x},{chunk_z} vertices={} surface_y={min_height}..{max_height}\n",
+        "renderer diagnostic chunk meshed: {chunk_x},{chunk_z} vertices={}\n",
         world_chunk.vertices.len()
     ));
     Box::into_raw(Box::new(world_chunk)).cast::<c_void>()
@@ -1064,6 +891,7 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
     let mut min_y = None;
     let mut height = None;
     let mut blocks = Vec::new();
+    let mut biomes = Vec::new();
     for chunk_z in origin_z..=end_z {
         for chunk_x in origin_x..=end_x {
             let chunk = match generate_chunk_blocks(context, chunk_x, chunk_z) {
@@ -1087,6 +915,7 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
             height = Some(chunk.height);
             if blocks.is_empty() {
                 blocks.resize(chunk.height * diameter * diameter, 0);
+                biomes.resize((chunk.height / 4) * (diameter / 4) * (diameter / 4), 0);
             }
             let local_chunk_x = ((chunk_x - origin_x) * 16) as usize;
             let local_chunk_z = ((chunk_z - origin_z) * 16) as usize;
@@ -1099,30 +928,39 @@ pub extern "C" fn horizon_wiiu_world_generate_region(
                         .copy_from_slice(&chunk.states[source_row..source_row + 16]);
                 }
             }
+            let quart_diameter = diameter / 4;
+            let quart_chunk_x = local_chunk_x / 4;
+            let quart_chunk_z = local_chunk_z / 4;
+            for quart_y in 0..chunk.height / 4 {
+                for quart_z in 0..4 {
+                    let source_at = quart_y * 16 + quart_z * 4;
+                    let target_at = (quart_y * quart_diameter + quart_chunk_z + quart_z)
+                        * quart_diameter
+                        + quart_chunk_x;
+                    biomes[target_at..target_at + 4]
+                        .copy_from_slice(&chunk.biomes[source_at..source_at + 4]);
+                }
+            }
         }
     }
     let min_y = min_y.unwrap_or(-64);
     let height = height.unwrap_or_default();
-    let world_chunk =
-        world_chunk_from_blocks(blocks, min_y, height, diameter, origin_x, origin_z, context);
-    let min_height = world_chunk
-        .heights
-        .iter()
-        .min()
-        .copied()
-        .unwrap_or_default();
-    let max_height = world_chunk
-        .heights
-        .iter()
-        .max()
-        .copied()
-        .unwrap_or_default();
+    let world_chunk = match world_chunk_from_blocks(
+        blocks, biomes, min_y, height, diameter, origin_x, origin_z, context,
+    ) {
+        Ok(chunk) => chunk,
+        Err(error) => {
+            copy_error(&error, error_out, error_capacity);
+            return ptr::null_mut();
+        }
+    };
     let timings = context.worker.stage_timings();
     write_status(&format!(
-        "region meshed: center={center_x},{center_z} chunks={} vertices={} surface_y={min_height}..{max_height} atlas={} gen_ms=biomes:{},noise:{},surface:{},structures:{},carvers:{}\n",
+        "renderer diagnostic region meshed: center={center_x},{center_z} chunks={} vertices={} atlas={}x{} gen_ms=biomes:{},noise:{},surface:{},structures:{},carvers:{}\n",
         side * side,
         world_chunk.vertices.len(),
-        if context.terrain_atlas.is_some() { "local" } else { "placeholder" },
+        context.terrain_atlas.width,
+        context.terrain_atlas.height,
         timings.biomes.as_millis(),
         timings.noise.as_millis(),
         timings.surface.as_millis(),
@@ -1252,7 +1090,7 @@ pub extern "C" fn horizon_wiiu_world_chunk_vertices(
     chunk.vertices.as_ptr()
 }
 
-/// Borrow the prepared 64x32 RGBA terrain atlas until the world context closes.
+/// Borrow the flattened Horizon RGBA atlas until the world context closes.
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_world_terrain_atlas() -> *const u8 {
     let loaded = world()
@@ -1260,8 +1098,25 @@ pub extern "C" fn horizon_wiiu_world_terrain_atlas() -> *const u8 {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     loaded
         .as_ref()
-        .and_then(|context| context.terrain_atlas.as_ref())
-        .map_or(ptr::null(), |atlas| atlas.as_ptr())
+        .map_or(ptr::null(), |context| context.terrain_atlas.pixels.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_terrain_atlas_width() -> u32 {
+    world()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map_or(0, |context| context.terrain_atlas.width)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_terrain_atlas_height() -> u32 {
+    world()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map_or(0, |context| context.terrain_atlas.height)
 }
 
 /// Copy worker timing totals as chunks, biomes, noise, surface, structures, carvers (microseconds).
@@ -1299,211 +1154,6 @@ pub extern "C" fn horizon_wiiu_world_stage_timings(output: *mut u64) -> i32 {
     1
 }
 
-/// Copy the generated Horizon world-surface heights for camera grounding.
-#[unsafe(no_mangle)]
-pub extern "C" fn horizon_wiiu_world_chunk_heights(
-    chunk: *const c_void,
-    heights_out: *mut i16,
-    capacity: u32,
-) -> i32 {
-    if chunk.is_null() || heights_out.is_null() {
-        return 0;
-    }
-    // SAFETY: `chunk` came from a world chunk/region function and remains live.
-    let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
-    let Ok(height_count) = u32::try_from(chunk.heights.len()) else {
-        return 0;
-    };
-    if capacity < height_count {
-        return 0;
-    }
-    // SAFETY: C supplies `capacity` writable height entries after the check.
-    unsafe { ptr::copy_nonoverlapping(chunk.heights.as_ptr(), heights_out, height_count as usize) };
-    1
-}
-
-/// Return the first opaque Horizon block intersected by a normalized ray.
-/// Output is `[hit_x, hit_y, hit_z, adjacent_x, adjacent_y, adjacent_z]`.
-#[unsafe(no_mangle)]
-pub extern "C" fn horizon_wiiu_world_raycast(
-    chunk: *const c_void,
-    origin: *const f32,
-    direction: *const f32,
-    max_distance: f32,
-    hit_out: *mut i32,
-) -> i32 {
-    if chunk.is_null() || origin.is_null() || direction.is_null() || hit_out.is_null() {
-        return 0;
-    }
-    // SAFETY: C keeps the generated region alive and provides three floats for
-    // both vectors plus six writable hit coordinates.
-    let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
-    let origin = unsafe { core::slice::from_raw_parts(origin, 3) };
-    let direction = unsafe { core::slice::from_raw_parts(direction, 3) };
-    let (Some(world_origin_x), Some(world_origin_z)) =
-        (chunk.chunk_x.checked_mul(16), chunk.chunk_z.checked_mul(16))
-    else {
-        return 0;
-    };
-    let Some(mut hit) = raycast_blocks(
-        &chunk.blocks,
-        chunk.diameter,
-        chunk.min_y,
-        chunk.height,
-        &chunk.opaque,
-        [
-            origin[0] - world_origin_x as f32,
-            origin[1],
-            origin[2] - world_origin_z as f32,
-        ],
-        [direction[0], direction[1], direction[2]],
-        max_distance,
-    ) else {
-        return 0;
-    };
-    hit[0] += world_origin_x;
-    hit[2] += world_origin_z;
-    hit[3] += world_origin_x;
-    hit[5] += world_origin_z;
-    // SAFETY: the C caller provides six writable block coordinates.
-    unsafe { ptr::copy_nonoverlapping(hit.as_ptr(), hit_out, hit.len()) };
-    1
-}
-
-/// Test the player's rectangular body against the loaded Horizon block states.
-/// `eye_y` is the camera eye; body height is measured upward from player feet.
-#[unsafe(no_mangle)]
-pub extern "C" fn horizon_wiiu_world_player_clear(
-    chunk: *const c_void,
-    center_x: f32,
-    eye_y: f32,
-    center_z: f32,
-    half_width: f32,
-    body_height: f32,
-) -> i32 {
-    if chunk.is_null() {
-        return 0;
-    }
-    // SAFETY: C retains this generated region for the duration of the query.
-    let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
-    let (Some(world_origin_x), Some(world_origin_z)) =
-        (chunk.chunk_x.checked_mul(16), chunk.chunk_z.checked_mul(16))
-    else {
-        return 0;
-    };
-    player_aabb_clear(
-        &chunk.blocks,
-        chunk.diameter,
-        chunk.min_y,
-        world_origin_x,
-        world_origin_z,
-        chunk.height,
-        &chunk.opaque,
-        center_x,
-        eye_y,
-        center_z,
-        half_width,
-        body_height,
-    ) as i32
-}
-
-/// Replace one block in a loaded region and rebuild its terrain mesh.
-/// Returns 1 when changed, 0 when unchanged/outside the loaded region, or -1
-/// when the world is unavailable or the requested state is not opaque.
-#[unsafe(no_mangle)]
-pub extern "C" fn horizon_wiiu_world_set_block(
-    chunk: *mut c_void,
-    world_x: i32,
-    y: i32,
-    world_z: i32,
-    state: u32,
-) -> i32 {
-    if chunk.is_null() {
-        return -1;
-    }
-    let mut loaded = world()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let Some(context) = loaded.as_mut() else {
-        return -1;
-    };
-    // SAFETY: C passes a live region produced by this module and serializes
-    // region replacement and edits on the renderer thread.
-    let chunk = unsafe { &mut *chunk.cast::<WorldChunk>() };
-    if state != 0 && !is_opaque(state, &chunk.opaque) {
-        return -1;
-    }
-    let Some(origin_x) = chunk.chunk_x.checked_mul(16) else {
-        return 0;
-    };
-    let Some(origin_z) = chunk.chunk_z.checked_mul(16) else {
-        return 0;
-    };
-    let (Some(local_x), Some(local_z)) =
-        (world_x.checked_sub(origin_x), world_z.checked_sub(origin_z))
-    else {
-        return 0;
-    };
-    let Some(old_state) = set_block_data(
-        &mut chunk.blocks,
-        chunk.diameter,
-        chunk.min_y,
-        chunk.height,
-        local_x,
-        y,
-        local_z,
-        state,
-    ) else {
-        return 0;
-    };
-    if old_state == state {
-        return 0;
-    }
-    context.edits.insert((world_x, y, world_z), state);
-    let persistence = save_chunk_edits(
-        &context.edits_path,
-        &context.edits,
-        ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16)),
-        context.seed,
-        context.profile,
-    );
-    chunk.heights = surface_heights(
-        &chunk.blocks,
-        chunk.diameter,
-        chunk.min_y,
-        chunk.height,
-        &chunk.opaque,
-    );
-    chunk.vertices = mesh_blocks(
-        &chunk.blocks,
-        chunk.diameter,
-        chunk.min_y,
-        chunk.height,
-        &chunk.opaque,
-        &chunk.materials,
-    );
-    match persistence {
-        Ok(()) => write_status(&format!(
-            "block edited and saved: {world_x},{y},{world_z} {old_state}->{state} vertices={} edits={}\n",
-            chunk.vertices.len(),
-            context.edits.len()
-        )),
-        Err(error) => write_status(&format!(
-            "block edited but save failed: {world_x},{y},{world_z} {old_state}->{state}: {error}\n"
-        )),
-    }
-    1
-}
-
-/// The first opaque minecraft:dirt state is used for the prototype placement slot.
-#[unsafe(no_mangle)]
-pub extern "C" fn horizon_wiiu_world_placement_state() -> u32 {
-    let loaded = world()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    loaded.as_ref().map_or(0, |context| context.placement_state)
-}
-
 /// Get the generated chunk coordinates for renderer-relative positioning.
 #[unsafe(no_mangle)]
 pub extern "C" fn horizon_wiiu_world_chunk_position(chunk: *const c_void, output: *mut i32) -> i32 {
@@ -1517,6 +1167,26 @@ pub extern "C" fn horizon_wiiu_world_chunk_position(chunk: *const c_void, output
         output.write(chunk.chunk_x);
         output.add(1).write(chunk.chunk_z);
     }
+    1
+}
+
+/// Copy the canonical Horizon surface height at the generator's spawn column.
+/// Returns zero until the generated region has included that spawn chunk.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_world_chunk_diagnostic_surface_y(
+    chunk: *const c_void,
+    output: *mut i32,
+) -> i32 {
+    if chunk.is_null() || output.is_null() {
+        return 0;
+    }
+    // SAFETY: `chunk` came from a world chunk/region function and remains live.
+    let chunk = unsafe { &*chunk.cast::<WorldChunk>() };
+    let Some(surface_y) = chunk.diagnostic_surface_y else {
+        return 0;
+    };
+    // SAFETY: the C caller provides one writable i32.
+    unsafe { output.write(surface_y) };
     1
 }
 
@@ -1552,248 +1222,56 @@ pub extern "C" fn horizon_wiiu_world_spawn(output: *mut i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn materials() -> Vec<Material> {
-        vec![Material::from_name("minecraft:stone"); 2]
-    }
-
-    fn temporary_save_path() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("horizon-wiiu-edits-{}-{nonce}", std::process::id()))
-    }
 
     #[test]
-    fn world_edit_nbt_is_deterministic_and_validates_identity_and_states() {
-        let mut first = HashMap::new();
-        first.insert((10, -60, 4), 1);
-        first.insert((9, -59, 5), 0);
-        let mut second = HashMap::new();
-        second.insert((9, -59, 5), 0);
-        second.insert((10, -60, 4), 1);
-
-        let chunk = ChunkPos::new(0, 0);
-        let make_tag = |edits: &HashMap<_, _>| {
-            edit_chunk_tag(
-                chunk,
-                edits.iter().map(|(&position, &state)| (position, state)),
-                12345,
-                PROFILE_SUPERFLAT,
-            )
+    fn canonical_chunk_view_reads_region_blocks_biomes_and_diagnostic_sky_light() {
+        let mut blocks = vec![0; 16 * 16 * 16];
+        blocks[(7 * 16 + 9) * 16 + 5] = 42;
+        let mut biomes = vec![0; 4 * 4 * 4];
+        biomes[(1 * 4 + 2) * 4 + 1] = 77;
+        let chunk = WorldChunk {
+            vertices: Vec::new().into_boxed_slice(),
+            blocks: blocks.into_boxed_slice(),
+            biomes: biomes.into_boxed_slice(),
+            min_y: 0,
+            height: 16,
+            diameter: 16,
+            chunk_x: 0,
+            chunk_z: 0,
+            diagnostic_surface_y: Some(-59),
         };
-        let tag = make_tag(&first);
-        assert_eq!(tag, make_tag(&second));
-        let mut decoded = HashMap::new();
-        decode_edit_chunk(
-            &tag,
-            chunk,
-            12345,
-            PROFILE_SUPERFLAT,
-            &[false, true],
-            &mut decoded,
-        )
-        .unwrap();
-        assert_eq!(decoded, first);
-        let mut invalid_state = tag.clone();
-        let Some(Tag::List(records)) = invalid_state.tag.get_mut("edits") else {
-            unreachable!();
+        let view = RegionChunkView::new(&chunk, 0, 0);
+        assert_eq!(view.get(5, 7, 9), 42);
+        assert_eq!(view.biome(4, 4, 8), 77);
+        assert_eq!(view.light(5, 7, 9), 0xF0);
+        let section = view.section_at(0).unwrap();
+        let mut run = [0; 1];
+        section.get_run(7 * 256 + 9 * 16 + 5, &mut run);
+        assert_eq!(run, [42]);
+        let mut light = [0; 2];
+        section.copy_light_run(0, &mut light);
+        assert_eq!(light, [0xF0; 2]);
+    }
+
+    #[test]
+    fn atlas_uv_remapping_matches_clamp_to_edge_and_preserves_cutout_flag() {
+        let atlas = TerrainAtlas {
+            pixels: Vec::new().into_boxed_slice(),
+            width: 64,
+            height: 64,
+            sprite_size: 4,
+            cell_size: 6,
+            columns: 2,
+            layers: 4,
         };
-        records[0]
-            .get_mut("state")
-            .unwrap()
-            .clone_from(&Tag::Int(2));
-        assert!(decode_edit_chunk(
-            &invalid_state,
-            chunk,
-            12345,
-            PROFILE_SUPERFLAT,
-            &[false, true],
-            &mut HashMap::new(),
-        )
-        .is_err());
-        assert!(decode_edit_chunk(
-            &tag,
-            chunk,
-            54321,
-            PROFILE_SUPERFLAT,
-            &[false, true],
-            &mut HashMap::new(),
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn world_edit_chunks_round_trip_through_horizon_region_files() {
-        let root = temporary_save_path();
-        let path = root.join("wiiu-edits").join("region");
-        let mut edits = HashMap::new();
-        edits.insert((103, -61, -27), 0);
-        edits.insert((104, -61, -27), 1);
-        edits.insert((128, -60, -32), 1);
-        edits.insert((-513, 12, 527), 1);
-
-        save_chunk_edits(
-            &path,
-            &edits,
-            ChunkPos::new(6, -2),
-            12345,
-            PROFILE_SUPERFLAT,
-        )
-        .unwrap();
-        save_chunk_edits(
-            &path,
-            &edits,
-            ChunkPos::new(8, -2),
-            12345,
-            PROFILE_SUPERFLAT,
-        )
-        .unwrap();
-        save_chunk_edits(
-            &path,
-            &edits,
-            ChunkPos::new(-33, 32),
-            12345,
-            PROFILE_SUPERFLAT,
-        )
-        .unwrap();
-        assert_eq!(
-            load_edits(&path, 12345, PROFILE_SUPERFLAT, &[false, true]).unwrap(),
-            edits
-        );
-
-        edits.insert((105, -61, -27), 1);
-        save_chunk_edits(
-            &path,
-            &edits,
-            ChunkPos::new(6, -2),
-            12345,
-            PROFILE_SUPERFLAT,
-        )
-        .unwrap();
-        assert_eq!(
-            load_edits(&path, 12345, PROFILE_SUPERFLAT, &[false, true]).unwrap(),
-            edits
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn missing_world_edit_directory_loads_as_an_empty_overlay() {
-        let path = temporary_save_path().join("absent").join("region");
-        assert!(load_edits(&path, 12345, PROFILE_SUPERFLAT, &[false, true])
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn voxel_ray_hits_nearest_block_and_reports_previous_air_cell() {
-        let diameter = 16;
-        let min_y = 0;
-        let height = 4;
-        let mut blocks = vec![0; diameter * diameter * height];
-        set_block_data(&mut blocks, diameter, min_y, height, 8, 1, 6, 1).unwrap();
-        set_block_data(&mut blocks, diameter, min_y, height, 8, 1, 9, 1).unwrap();
-
-        assert_eq!(
-            raycast_blocks(
-                &blocks,
-                diameter,
-                min_y,
-                height,
-                &[false, true],
-                [8.5, 1.5, 4.5],
-                [0.0, 0.0, 1.0],
-                2.0,
-            ),
-            Some([8, 1, 6, 8, 1, 5])
-        );
-        assert_eq!(
-            raycast_blocks(
-                &blocks,
-                diameter,
-                min_y,
-                height,
-                &[false, true],
-                [8.5, 1.5, 4.5],
-                [0.0, 0.0, 1.0],
-                1.0,
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn edited_horizon_states_change_surface_and_mesh_and_survive_region_reload() {
-        let diameter = 16;
-        let min_y = 0;
-        let height = 4;
-        let opaque = [false, true];
-        let mut blocks = vec![0; diameter * diameter * height];
-        set_block_data(&mut blocks, diameter, min_y, height, 8, 0, 8, 1).unwrap();
-        let original_mesh = mesh_blocks(&blocks, diameter, min_y, height, &opaque, &materials());
-        assert_eq!(original_mesh.len(), 24);
-        assert_eq!(
-            surface_heights(&blocks, diameter, min_y, height, &opaque)[8 * diameter + 8],
-            1
-        );
-
-        assert_eq!(
-            set_block_data(&mut blocks, diameter, min_y, height, 8, 1, 8, 1),
-            Some(0)
-        );
-        let placed_mesh = mesh_blocks(&blocks, diameter, min_y, height, &opaque, &materials());
-        assert_eq!(placed_mesh.len(), 40);
-        assert_eq!(
-            surface_heights(&blocks, diameter, min_y, height, &opaque)[8 * diameter + 8],
-            2
-        );
-
-        let mut edits = HashMap::new();
-        edits.insert((8, 1, 8), 1);
-        let mut regenerated_chunk = vec![0; 16 * 16 * height];
-        apply_chunk_edits(&mut regenerated_chunk, 0, 0, min_y, height, &edits);
-        assert_eq!(
-            block_state(&regenerated_chunk, 16, min_y, height, 8, 1, 8),
-            1
-        );
-
-        assert_eq!(
-            set_block_data(&mut blocks, diameter, min_y, height, 8, 1, 8, 0),
-            Some(1)
-        );
-        let broken_mesh = mesh_blocks(&blocks, diameter, min_y, height, &opaque, &materials());
-        assert_eq!(broken_mesh.len(), 24);
-        assert_eq!(
-            surface_heights(&blocks, diameter, min_y, height, &opaque)[8 * diameter + 8],
-            1
-        );
-    }
-
-    #[test]
-    fn player_body_collision_ignores_floor_contact_but_detects_walls_and_ceilings() {
-        let diameter = 16;
-        let min_y = 0;
-        let height = 5;
-        let opaque = [false, true];
-        let mut blocks = vec![0; diameter * diameter * height];
-        for z in 0..diameter as i32 {
-            for x in 0..diameter as i32 {
-                set_block_data(&mut blocks, diameter, min_y, height, x, 0, z, 1).unwrap();
-            }
-        }
-        set_block_data(&mut blocks, diameter, min_y, height, 9, 1, 8, 1).unwrap();
-        set_block_data(&mut blocks, diameter, min_y, height, 8, 3, 8, 1).unwrap();
-
-        let clear = |x, eye_y, z| {
-            player_aabb_clear(
-                &blocks, diameter, min_y, 0, 0, height, &opaque, x, eye_y, z, 0.30, 1.80,
-            )
-        };
-        assert!(clear(8.5, 2.62, 8.5));
-        assert!(!clear(8.75, 2.62, 8.5));
-        assert!(!clear(8.5, 3.62, 8.5));
+        let mut vertex = TerrainVertex::new([1.0, 2.0, 3.0], [1.5, 0.5], 1 | OPAQUE_LAYER, 7, 9);
+        atlas.remap_vertex(&mut vertex).unwrap();
+        assert_eq!(vertex.layer, OPAQUE_LAYER);
+        let uv = vertex.uv();
+        assert!((uv[0] - 10.5 / 64.0).abs() < 1.0 / 32768.0);
+        assert!((uv[1] - 3.0 / 64.0).abs() < 1.0 / 32768.0);
+        assert_eq!(vertex.pos, [1.0, 2.0, 3.0]);
+        assert_eq!(vertex.color, 7);
+        assert_eq!(vertex.light, 9);
     }
 }

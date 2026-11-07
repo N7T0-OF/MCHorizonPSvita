@@ -14,7 +14,74 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::AtomicU64;
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::AtomicU64;
+
 pub const MATERIALS: [&str; 6] = ["bedrock", "dirt", "stone", "sand", "oak_planks", "bricks"];
+
+/// The terrain asset-loading phase reported by [`Assets::reload_for_terrain_with_progress`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerrainAssetPhase {
+    BaseSprites,
+    BlockModelBake,
+    FluidSprites,
+    Fusion,
+    ConnectedTextures,
+    SpriteCache,
+    AtlasFinish,
+}
+
+impl TerrainAssetPhase {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BaseSprites => "base sprites",
+            Self::BlockModelBake => "block model bake",
+            Self::FluidSprites => "fluid and destroy sprites",
+            Self::Fusion => "Fusion",
+            Self::ConnectedTextures => "Connected Textures",
+            Self::SpriteCache => "sprite cache save",
+            Self::AtlasFinish => "atlas finish",
+        }
+    }
+}
+
+/// A start or successful completion notification from the terrain asset loader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerrainAssetProgress {
+    Started(TerrainAssetPhase),
+    Completed(TerrainAssetPhase),
+}
+
+impl TerrainAssetProgress {
+    pub const fn phase(self) -> TerrainAssetPhase {
+        match self {
+            Self::Started(phase) | Self::Completed(phase) => phase,
+        }
+    }
+
+    pub const fn is_complete(self) -> bool {
+        matches!(self, Self::Completed(_))
+    }
+}
+
+fn load_phase<T>(
+    progress: &mut impl FnMut(TerrainAssetProgress),
+    enabled: bool,
+    phase: TerrainAssetPhase,
+    load: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if enabled {
+        progress(TerrainAssetProgress::Started(phase));
+    }
+    let value = load()?;
+    if enabled {
+        progress(TerrainAssetProgress::Completed(phase));
+    }
+    Ok(value)
+}
+
 #[derive(Clone, Copy)]
 pub struct StateFacts {
     air: bool,
@@ -184,7 +251,7 @@ impl SpritePixels {
     }
 }
 /// The last `RenderAssets::generation` handed out.
-static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
@@ -279,6 +346,22 @@ impl Assets {
     pub fn reload(&self, root: &Path) -> Result<RenderAssets> {
         RenderAssets::load(root, self)
     }
+    /// The block models and sprites needed by Horizon's terrain mesher,
+    /// without item models, the inspection gallery, LabPBR maps, or emissive
+    /// metadata. The current GX2 terrain backend has no emissive pass.
+    /// `RenderAssets::model_library` is unavailable on this path; the block
+    /// catalog and sprite data retain Horizon's regular resolver and baker.
+    pub fn reload_for_terrain(&self, root: &Path) -> Result<RenderAssets> {
+        self.reload_for_terrain_with_progress(root, |_| {})
+    }
+    /// [`Self::reload_for_terrain`] with start and completion notifications for expensive phases.
+    pub fn reload_for_terrain_with_progress(
+        &self,
+        root: &Path,
+        progress: impl FnMut(TerrainAssetProgress),
+    ) -> Result<RenderAssets> {
+        RenderAssets::load_for_terrain(root, self, progress)
+    }
     /// [`Assets::reload`] with the model library already parsed.
     ///
     /// Parsing it reads every model file under `assets/`, which needs no
@@ -299,9 +382,38 @@ impl Assets {
         RenderAssets::load_with(root, self, false)
     }
 }
+
+/// Invalidate the Wii U terrain sprite cache before rebuilding it from a
+/// prepared resource tree. Desktop cache validation and reloads are unchanged.
+pub fn invalidate_terrain_sprite_cache(root: &Path) -> std::io::Result<()> {
+    crate::sprite_cache::invalidate_terrain_cache(root)
+}
+
 impl RenderAssets {
     pub fn load(root: &Path, assets: &Assets) -> Result<Self> {
         Self::load_with(root, assets, true)
+    }
+    fn load_for_terrain(
+        root: &Path,
+        assets: &Assets,
+        progress: impl FnMut(TerrainAssetProgress),
+    ) -> Result<Self> {
+        let mut sprite_cache_valid = false;
+        let render = Self::load_with_options(
+            root,
+            assets,
+            true,
+            None,
+            true,
+            progress,
+            Some(&mut sprite_cache_valid),
+        )?;
+        if sprite_cache_valid {
+            // The marker is an optimization. Failure to write it leaves the
+            // regular fingerprinted cache path available on the next launch.
+            let _ = crate::sprite_cache::mark_terrain_cache_ready(root);
+        }
+        Ok(render)
     }
     fn load_with(root: &Path, assets: &Assets, draws: bool) -> Result<Self> {
         Self::load_with_parsed(root, assets, draws, None)
@@ -314,94 +426,180 @@ impl RenderAssets {
         draws: bool,
         parsed: Option<crate::model_library::ParsedModels>,
     ) -> Result<Self> {
+        Self::load_with_options(root, assets, draws, parsed, false, |_| {}, None)
+    }
+    fn load_with_options(
+        root: &Path,
+        assets: &Assets,
+        draws: bool,
+        parsed: Option<crate::model_library::ParsedModels>,
+        terrain_only: bool,
+        mut progress: impl FnMut(TerrainAssetProgress),
+        mut terrain_cache_valid: Option<&mut bool>,
+    ) -> Result<Self> {
         let registry = assets.registry;
-        let mut sprites = crate::sprites::Sprites::with_disk_cache(root);
-        for name in MATERIALS {
-            sprites.insert(root, &format!("minecraft:block/{name}"))?;
-        }
+        let mut sprites = load_phase(
+            &mut progress,
+            terrain_only,
+            TerrainAssetPhase::BaseSprites,
+            || {
+                let mut sprites = if terrain_only {
+                    crate::sprites::Sprites::with_disk_cache_without_pbr(root)
+                } else {
+                    crate::sprites::Sprites::with_disk_cache(root)
+                };
+                for name in MATERIALS {
+                    sprites.insert(root, &format!("minecraft:block/{name}"))?;
+                }
+                Ok(sprites)
+            },
+        )?;
         // A server draws no block and no item: its block models (about 24 MB
         // baked) and item model library (7 MB) stay empty.
-        let parsed = match parsed {
-            Some(parsed) => parsed,
-            None if draws => {
-                let _step = crate::spans::startup::step("core.models_parse");
-                crate::model_library::ParsedModels::load(root)
+        let parsed = if terrain_only {
+            crate::model_library::ParsedModels::default()
+        } else {
+            match parsed {
+                Some(parsed) => parsed,
+                None if draws => {
+                    let _step = crate::spans::startup::step("core.models_parse");
+                    crate::model_library::ParsedModels::load(root)
+                }
+                None => crate::model_library::ParsedModels::default(),
             }
-            None => crate::model_library::ParsedModels::default(),
         };
         let mut models = if draws {
-            let _step = crate::spans::startup::step("core.models_bake");
-            crate::models::prepare_with_models(root, registry, &mut sprites, &parsed)?
+            if terrain_only {
+                load_phase(
+                    &mut progress,
+                    true,
+                    TerrainAssetPhase::BlockModelBake,
+                    || crate::models::prepare_for_terrain(root, registry, &mut sprites),
+                )?
+            } else {
+                let _step = crate::spans::startup::step("core.models_bake");
+                crate::models::prepare_with_models(root, registry, &mut sprites, &parsed)?
+            }
         } else {
             crate::models::PreparedModels::default()
         };
-        let model_library = {
+        let model_library = if terrain_only {
+            Err("item model library omitted by terrain-only asset reload".to_owned())
+        } else {
             let _step = crate::spans::startup::step("core.item_library");
             parsed.into_item_library()
         };
         // Fluids are drawn by the fluid renderer, not block models; breaking
         // progress uses the destroy-stage overlays.
-        for name in [
-            "water_still",
-            "water_flow",
-            "water_overlay",
-            "lava_still",
-            "lava_flow",
-        ] {
-            sprites.insert(root, &format!("minecraft:block/{name}"))?;
-        }
-        for stage in 0..10 {
-            sprites.insert(root, &format!("minecraft:block/destroy_stage_{stage}"))?;
-            sprites.insert(root, &format!("minecraft:block/destroy_oit_stage_{stage}"))?;
-        }
+        load_phase(
+            &mut progress,
+            terrain_only,
+            TerrainAssetPhase::FluidSprites,
+            || {
+                for name in [
+                    "water_still",
+                    "water_flow",
+                    "water_overlay",
+                    "lava_still",
+                    "lava_flow",
+                ] {
+                    sprites.insert(root, &format!("minecraft:block/{name}"))?;
+                }
+                for stage in 0..10 {
+                    sprites.insert(root, &format!("minecraft:block/destroy_stage_{stage}"))?;
+                    sprites.insert(root, &format!("minecraft:block/destroy_oit_stage_{stage}"))?;
+                }
+                Ok(())
+            },
+        )?;
         let fusion = if draws {
             let _step = crate::spans::startup::step("core.fusion");
-            crate::fusion::FusionTextures::load(root, registry, &mut sprites, &mut models.catalog)
+            load_phase(
+                &mut progress,
+                terrain_only,
+                TerrainAssetPhase::Fusion,
+                || {
+                    Ok(crate::fusion::FusionTextures::load(
+                        root,
+                        registry,
+                        &mut sprites,
+                        &mut models.catalog,
+                    ))
+                },
+            )?
         } else {
             Default::default()
         };
         let mut emissive = Vec::new();
         let connected = if draws {
-            crate::native_emissive::load(root, &mut sprites);
-            // A side's sprite, for rules that connect by tile: the first quad facing it.
-            let catalog = &models.catalog;
-            let mut found = Vec::new();
-            crate::connected::ConnectedTextures::load(
-                root,
-                registry,
-                &mut sprites,
-                |state, face| {
-                    let side = horizon_assets::model::Direction::ALL[face as usize];
-                    catalog
-                        .models_at(
-                            state,
-                            horizon_core::position::BlockPos::new(0, 0, 0),
-                            &mut found,
-                        )
-                        .ok()?;
-                    found
-                        .iter()
-                        .flat_map(|m| &m.faces)
-                        .find(|f| f.quad.facing == side)
-                        .map(|f| f.layer)
+            load_phase(
+                &mut progress,
+                terrain_only,
+                TerrainAssetPhase::ConnectedTextures,
+                || {
+                    if !terrain_only {
+                        crate::native_emissive::load(root, &mut sprites);
+                    }
+                    // A side's sprite, for rules that connect by tile: the first quad facing it.
+                    let catalog = &models.catalog;
+                    let mut found = Vec::new();
+                    Ok(crate::connected::ConnectedTextures::load(
+                        root,
+                        registry,
+                        &mut sprites,
+                        |state, face| {
+                            let side = horizon_assets::model::Direction::ALL[face as usize];
+                            catalog
+                                .models_at(
+                                    state,
+                                    horizon_core::position::BlockPos::new(0, 0, 0),
+                                    &mut found,
+                                )
+                                .ok()?;
+                            found
+                                .iter()
+                                .flat_map(|m| &m.faces)
+                                .find(|f| f.quad.facing == side)
+                                .map(|f| f.layer)
+                        },
+                    ))
                 },
-            )
+            )?
         } else {
             Default::default()
         };
         // After the connected tiles: a tile identical to a block shares its layer, and the
         // overlays skip shared layers.
-        if draws {
+        if draws && !terrain_only {
             emissive = crate::native_emissive::load_optifine(root, &mut sprites);
         }
-        sprites.save_disk_cache();
-        if draws {
-            sprites.finish();
-        } else {
-            sprites.finish_without_pixels();
-        }
-        // `finish` grows the buffer by doubling: keep only the bytes in use.
-        sprites.pixels.shrink_to_fit();
+        load_phase(
+            &mut progress,
+            terrain_only,
+            TerrainAssetPhase::SpriteCache,
+            || {
+                let valid = sprites.save_disk_cache();
+                if let Some(output) = terrain_cache_valid.as_deref_mut() {
+                    *output = valid;
+                }
+                Ok(())
+            },
+        )?;
+        load_phase(
+            &mut progress,
+            terrain_only,
+            TerrainAssetPhase::AtlasFinish,
+            || {
+                if draws {
+                    sprites.finish();
+                } else {
+                    sprites.finish_without_pixels();
+                }
+                // `finish` grows the buffer by doubling: keep only the bytes in use.
+                sprites.pixels.shrink_to_fit();
+                Ok(())
+            },
+        )?;
         Ok(Self {
             sprite_size: sprites.size,
             sprite_minimum_size: sprites.minimum_size,
@@ -530,5 +728,70 @@ mod tests {
         );
         assert_eq!(*stored.get(), pixels);
         assert_eq!(stored.len(), pixels.len());
+    }
+
+    #[test]
+    fn terrain_asset_progress_reports_phases_in_order() {
+        use super::{
+            Assets, Properties, StateFacts, TerrainAssetPhase as Phase,
+            TerrainAssetProgress as Event,
+        };
+        use horizon_world::registry::BlockRegistry;
+        use std::{collections::BTreeSet, sync::Arc};
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "horizon-terrain-progress-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("model-states.json"), "{}").unwrap();
+        let (registry, _) = BlockRegistry::from_facts_json_with_flags(
+            &br#"{"defaults":{"minecraft:air":0},"states":[["minecraft:air",true,false,"air","minecraft:air"]]}"#[..],
+        )
+        .unwrap();
+        let registry = Box::leak(Box::new(registry));
+        let assets = Assets {
+            registry,
+            properties: Properties(Arc::new(vec![StateFacts {
+                air: true,
+                fluid: false,
+                air_block: true,
+                motion: false,
+                no_leaves: false,
+            }])),
+            material_states: [horizon_world::registry::BlockStateId(0); 6],
+            blocks_fluid_flow: BTreeSet::new(),
+        };
+        let mut events = Vec::new();
+        let render = assets
+            .reload_for_terrain_with_progress(&root, |event| events.push(event))
+            .unwrap();
+        assert_eq!(
+            events,
+            [
+                Event::Started(Phase::BaseSprites),
+                Event::Completed(Phase::BaseSprites),
+                Event::Started(Phase::BlockModelBake),
+                Event::Completed(Phase::BlockModelBake),
+                Event::Started(Phase::FluidSprites),
+                Event::Completed(Phase::FluidSprites),
+                Event::Started(Phase::Fusion),
+                Event::Completed(Phase::Fusion),
+                Event::Started(Phase::ConnectedTextures),
+                Event::Completed(Phase::ConnectedTextures),
+                Event::Started(Phase::SpriteCache),
+                Event::Completed(Phase::SpriteCache),
+                Event::Started(Phase::AtlasFinish),
+                Event::Completed(Phase::AtlasFinish),
+            ]
+        );
+        assert!(render.model_library.is_err());
+        assert!(render.model_gallery.is_empty() && render.model_placements.is_empty());
+        assert!(!root.join("horizon-wiiu-terrain-sprites.ready").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

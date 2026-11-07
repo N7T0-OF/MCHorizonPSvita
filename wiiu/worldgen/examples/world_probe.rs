@@ -18,7 +18,14 @@ fn main() {
     let profile = match args.next().as_deref().and_then(|value| value.to_str()) {
         None | Some("overworld") => 0,
         Some("flat") => 1,
-        Some(other) => panic!("unknown profile {other:?}; use `overworld` or `flat`"),
+        Some(other) => {
+            panic!("unknown renderer diagnostic profile {other:?}; use `overworld` or `flat`")
+        }
+    };
+    let profile_name = if profile == 1 {
+        "reduced-flat-renderer-diagnostic"
+    } else {
+        "overworld-renderer-diagnostic-without-structures"
     };
     let radius = args
         .next()
@@ -65,26 +72,48 @@ fn main() {
             error.len() as u32,
         )
     };
-    assert!(!chunk.is_null(), "chunk generation failed: {}", unsafe {
-        std::ffi::CStr::from_ptr(error.as_ptr()).to_string_lossy()
-    });
+    assert!(
+        !chunk.is_null(),
+        "Horizon diagnostic generation failed: {}",
+        unsafe { std::ffi::CStr::from_ptr(error.as_ptr()).to_string_lossy() }
+    );
+
     let mut vertex_count = 0;
     let vertices =
         horizon_wiiu_worldgen::horizon_wiiu_world_chunk_vertices(chunk, &mut vertex_count);
-    assert!(!vertices.is_null());
-    let height_diameter = ((radius * 2 + 1) * 16) as usize;
-    let mut heights = vec![0i16; height_diameter * height_diameter];
-    assert_eq!(
-        horizon_wiiu_worldgen::horizon_wiiu_world_chunk_heights(
-            chunk,
-            heights.as_mut_ptr(),
-            heights.len() as u32,
-        ),
-        1
+    assert!(!vertices.is_null(), "Horizon terrain mesh is unavailable");
+    assert!(
+        vertex_count > 0 && vertex_count % 4 == 0,
+        "invalid terrain vertex count {vertex_count}"
     );
-    let min_height = heights.iter().min().copied().unwrap_or_default();
-    let max_height = heights.iter().max().copied().unwrap_or_default();
-    let has_local_atlas = !horizon_wiiu_worldgen::horizon_wiiu_world_terrain_atlas().is_null();
+    let vertices = unsafe { std::slice::from_raw_parts(vertices, vertex_count as usize) };
+    assert!(
+        vertices.iter().all(|vertex| {
+            vertex.pos.iter().all(|value| value.is_finite())
+                && vertex.uv().iter().all(|value| value.is_finite())
+        }),
+        "Horizon terrain mesh contains a non-finite vertex"
+    );
+
+    let atlas = horizon_wiiu_worldgen::horizon_wiiu_world_terrain_atlas();
+    let atlas_width = horizon_wiiu_worldgen::horizon_wiiu_world_terrain_atlas_width();
+    let atlas_height = horizon_wiiu_worldgen::horizon_wiiu_world_terrain_atlas_height();
+    assert!(!atlas.is_null(), "Horizon terrain atlas is unavailable");
+    assert!(
+        atlas_width > 0 && atlas_height > 0,
+        "Horizon terrain atlas has invalid dimensions"
+    );
+    let atlas_bytes = u64::from(atlas_width) * u64::from(atlas_height) * 4;
+    assert!(
+        atlas_bytes <= usize::MAX as u64,
+        "terrain atlas exceeds host address space"
+    );
+    let atlas_pixels = unsafe { std::slice::from_raw_parts(atlas, atlas_bytes as usize) };
+    assert!(
+        atlas_pixels.iter().any(|pixel| *pixel != 0),
+        "Horizon terrain atlas is empty"
+    );
+
     let mut timings = [0u64; 6];
     assert_eq!(
         horizon_wiiu_worldgen::horizon_wiiu_world_stage_timings(timings.as_mut_ptr()),
@@ -95,140 +124,33 @@ fn main() {
         horizon_wiiu_worldgen::horizon_wiiu_world_chunk_position(chunk, mesh_origin.as_mut_ptr()),
         1
     );
-    if profile == 1 && radius > 0 {
-        let local_x = spawn[0] - mesh_origin[0] * 16;
-        let local_z = spawn[1] - mesh_origin[1] * 16;
-        let height_index = local_z as usize * height_diameter + local_x as usize;
-        let original_height = heights[height_index];
-        let origin = [
-            spawn[0] as f32 + 0.5,
-            f32::from(original_height) + 1.62,
-            spawn[1] as f32 + 0.5,
-        ];
-        let direction = [0.0f32, -1.0, 0.0];
-        println!(
-            "interaction target probe: spawn=({}, {}) region_origin=({}, {}) height={} ray_origin={origin:?}",
-            spawn[0], spawn[1], mesh_origin[0], mesh_origin[1], original_height
-        );
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_player_clear(
-                chunk, origin[0], origin[1], origin[2], 0.30, 1.80,
-            ),
-            1,
-            "standing on the Horizon surface should leave the player AABB clear"
-        );
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_player_clear(
-                chunk,
-                origin[0],
-                origin[1] - 1.0,
-                origin[2],
-                0.30,
-                1.80,
-            ),
-            0,
-            "placing the player inside the top block should be blocked"
-        );
-        let mut hit = [0i32; 6];
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_raycast(
-                chunk,
-                origin.as_ptr(),
-                direction.as_ptr(),
-                5.0,
-                hit.as_mut_ptr(),
-            ),
-            1,
-            "spawn column should be targetable"
-        );
-        assert_eq!(
-            hit,
-            [
-                spawn[0],
-                i32::from(original_height) - 1,
-                spawn[1],
-                spawn[0],
-                i32::from(original_height),
-                spawn[1]
-            ]
-        );
-
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_set_block(chunk, hit[0], hit[1], hit[2], 0),
-            1,
-            "breaking the targeted grass block should edit Horizon block state"
-        );
-        let mut edited_heights = vec![0i16; height_diameter * height_diameter];
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_chunk_heights(
-                chunk,
-                edited_heights.as_mut_ptr(),
-                edited_heights.len() as u32,
-            ),
-            1
-        );
-        assert_eq!(edited_heights[height_index], original_height - 1);
-        let placement_state = horizon_wiiu_worldgen::horizon_wiiu_world_placement_state();
-        assert_ne!(placement_state, 0);
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_set_block(
-                chunk,
-                hit[0],
-                hit[1],
-                hit[2],
-                placement_state
-            ),
-            1,
-            "placing the prototype dirt state should update the same block"
-        );
-        let mut restored_heights = vec![0i16; height_diameter * height_diameter];
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_chunk_heights(
-                chunk,
-                restored_heights.as_mut_ptr(),
-                restored_heights.len() as u32,
-            ),
-            1
-        );
-        assert_eq!(restored_heights[height_index], original_height);
-
-        let reloaded = horizon_wiiu_worldgen::horizon_wiiu_world_generate_region(
-            chunk_x,
-            chunk_z,
-            radius,
-            error.as_mut_ptr(),
-            error.len() as u32,
-        );
-        assert!(
-            !reloaded.is_null(),
-            "edited region should reload: {}",
-            unsafe { std::ffi::CStr::from_ptr(error.as_ptr()).to_string_lossy() }
-        );
-        let mut persisted_heights = vec![0i16; height_diameter * height_diameter];
-        assert_eq!(
-            horizon_wiiu_worldgen::horizon_wiiu_world_chunk_heights(
-                reloaded,
-                persisted_heights.as_mut_ptr(),
-                persisted_heights.len() as u32,
-            ),
-            1
-        );
-        assert_eq!(persisted_heights[height_index], original_height);
-        horizon_wiiu_worldgen::horizon_wiiu_world_free_chunk(reloaded);
-        println!(
-            "live interaction probe: raycast, break, place and region-reload persistence passed"
-        );
-    }
+    let mut spawn_surface_y = i32::MIN;
+    assert_eq!(
+        horizon_wiiu_worldgen::horizon_wiiu_world_chunk_diagnostic_surface_y(
+            chunk,
+            &mut spawn_surface_y,
+        ),
+        1,
+        "generated region should expose the Horizon spawn-column surface"
+    );
+    assert_ne!(
+        spawn_surface_y,
+        i32::MIN,
+        "spawn surface anchor was not written"
+    );
+    const FREE_FLY_MARGIN: i32 = 4;
+    let camera_anchor_y = spawn_surface_y
+        .checked_add(FREE_FLY_MARGIN)
+        .expect("camera surface margin does not overflow");
+    assert!(
+        camera_anchor_y > spawn_surface_y,
+        "diagnostic camera anchor should start above the Horizon surface"
+    );
     println!(
-        "Horizon 26.3 profile={profile} seed={seed} spawn=({}, {}) chunk=({}, {}) region_origin=({}, {}) radius={radius} mesh_vertices={vertex_count} surface_y={min_height}..{max_height} atlas={} generated_chunks={} stage_ms=biomes:{},noise:{},surface:{},structures:{},carvers:{}",
-        spawn[0], spawn[1], chunk_x, chunk_z, mesh_origin[0], mesh_origin[1],
-        if has_local_atlas { "local" } else { "placeholder" },
-        timings[0],
-        timings[1] / 1000,
-        timings[2] / 1000,
-        timings[3] / 1000,
-        timings[4] / 1000,
-        timings[5] / 1000
+        "Horizon runtime renderer diagnostic profile={profile_name} seed={seed} spawn=({}, {}) surface_y={spawn_surface_y} camera_anchor_y={camera_anchor_y} chunk=({}, {}) region_origin=({}, {}) radius={radius} mesh_vertices={} atlas=Horizon RGBA {atlas_width}x{atlas_height}={atlas_bytes}B generator_chunks={} stage_ms=biomes:{},noise:{},surface:{},structures:{},carvers:{}",
+        spawn[0], spawn[1], chunk_x, chunk_z, mesh_origin[0], mesh_origin[1], vertex_count,
+        timings[0], timings[1] / 1000, timings[2] / 1000, timings[3] / 1000,
+        timings[4] / 1000, timings[5] / 1000
     );
     horizon_wiiu_worldgen::horizon_wiiu_world_free_chunk(chunk);
 }
