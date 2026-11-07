@@ -1462,20 +1462,7 @@ impl HudAtlas {
         decode(&path).map_or((vec![0; 4], 1, 1), |(w, h, pixels)| (pixels, w, h))
     }
 }
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct HudVertex {
-    pub pos: [f32; 2],
-    pub uv: [f32; 2],
-    pub color: u32,
-    pub depth: f32,
-    /// The `GLINT_TEXTURING` UV into the repeating glint texture, unused
-    /// unless `uv.x >= 2`.
-    pub glint_uv: [f32; 2],
-    /// 1 for the GUI's text (`RenderPipelines.GUI_TEXT`), which a resource
-    /// pack's text shader draws when it has one.
-    pub text: u32,
-}
+pub use horizon_hud_data::{Blend, EndPortalFill, HudVertex, rgba};
 /// Sutherland-Hodgman against one half plane, interpolating every attribute.
 fn clip_polygon(poly: &[HudVertex], axis: usize, limit: f32, keep_below: bool) -> Vec<HudVertex> {
     let inside = |v: &HudVertex| {
@@ -1540,37 +1527,6 @@ pub struct HudBatch {
     pub blur_at: u32,
     /// Player object profiles encountered while painting text this frame.
     pub inline_profiles: Vec<serde_json::Value>,
-}
-/// How a run of HUD vertices blends and tests depth.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Blend {
-    /// `BlendFunction.TRANSLUCENT`.
-    Alpha,
-    /// `BlendFunction.INVERT` (`RenderPipelines.CROSSHAIR`, `GUI_INVERT`).
-    Invert,
-    /// `BlendFunction.ADDITIVE` (`RenderPipelines.GUI_TEXT_HIGHLIGHT`).
-    Additive,
-    /// Alpha blending with an isolated depth buffer and a pixel scissor.
-    Depth([u32; 4]),
-    /// `RenderPipelines.VIGNETTE`: the destination darkened by the texture
-    /// (`ZERO, ONE_MINUS_SRC_COLOR`).
-    Vignette,
-    /// `RenderPipelines.END_PORTAL` as a GUI fill: the End portal's layers
-    /// projected from the screen (`HudBatch::end_portal` sets the textures).
-    EndPortal,
-    /// An OptiFine CIT glint layer (`cit_glint`), blended as entry `n` of
-    /// `GlintTextures::blends` says.
-    CitGlint(u8),
-}
-/// What a `Blend::EndPortal` fill samples: the atlas rects (u0, v0, width,
-/// height) of `end_sky.png` and `end_portal.png`, and the `GameTime` uniform.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct EndPortalFill {
-    pub sprites: [[f32; 4]; 2],
-    pub game_time: f32,
-}
-pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
-    u32::from(a) << 24 | u32::from(b) << 16 | u32::from(g) << 8 | u32::from(r)
 }
 impl HudBatch {
     /// Window.calculateScale: the largest scale keeping >= 320x240 GUI pixels,

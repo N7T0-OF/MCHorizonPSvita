@@ -1535,6 +1535,7 @@ dependencies = [
  "horizon-core",
  "horizon-cosmetics",
  "horizon-hdr",
+ "horizon-hud-data",
  "horizon-items",
  "horizon-mod-api-gen",
  "horizon-narrator",
@@ -1631,6 +1632,13 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wgpu",
+]
+
+[[package]]
+name = "horizon-hud-data"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]
