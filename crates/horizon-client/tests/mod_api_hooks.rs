@@ -1,7 +1,8 @@
 //! A mod crate's view of the mod API: `Hooks` is implemented with the names `mod_api` exports.
 //! The test is that this file builds; #7044's mod could not name `key`'s event.
 use horizon_client::mod_api::{
-    Hooks, Host, InputKeyEvent, KeyEvent, MovementInputEvent, dispatch_movement_input, winit,
+    Hooks, Host, InputKeyEvent, InputKeyboardEvent, KeyEvent, MovementInputEvent,
+    dispatch_movement_input,
 };
 
 struct Keys;
@@ -12,7 +13,7 @@ impl Hooks for Keys {
     }
 
     fn input_key(&self, _host: &mut dyn Host, event: &mut InputKeyEvent<'_>) {
-        let _: &winit::event::KeyEvent = event.event;
+        let _: &InputKeyboardEvent = event.event;
     }
 }
 

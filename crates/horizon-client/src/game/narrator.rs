@@ -10,9 +10,10 @@ use horizon_client::{
     text::Text,
     toasts::SystemToast,
 };
-use horizon_client_platform::KeyCode;
+use horizon_client_platform::{
+    ClientWindowEvent as WindowEvent, KeyCode, KeyState as ElementState, MouseButton,
+};
 use horizon_narrator::{Status, screen::Trigger};
-use winit::event::{ElementState, MouseButton, WindowEvent};
 
 /// `Minecraft`'s constructor: `new GameNarrator`, then
 /// `narrator.checkStatus(options.narrator().get() != OFF)`.
@@ -126,7 +127,7 @@ pub(super) fn narrate_input(
                 narration.keyboard_action();
             }
         }
-        WindowEvent::MouseInput { state, button, .. } => {
+        WindowEvent::MouseInput { state, button } => {
             narration.set_input(InputType::Mouse);
             if *state == ElementState::Pressed {
                 narration.mouse_pressed(cursor, *button == MouseButton::Left);

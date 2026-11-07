@@ -228,6 +228,25 @@ pub enum KeyState {
     Released,
 }
 
+/// A logical key reported by a keyboard layout, independent of a physical key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LogicalKey {
+    Character(String),
+    /// A standardized named key. Unknown names are retained for native hooks.
+    Named(String),
+    Dead(Option<char>),
+    Unidentified,
+}
+
+/// The physical location of a key on a keyboard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyLocation {
+    Standard,
+    Left,
+    Right,
+    Numpad,
+}
+
 /// Platform-neutral keyboard input shared by desktop and native frontends.
 ///
 /// `logical_text` is the layout-resolved character used by shortcuts;
@@ -237,6 +256,8 @@ pub enum KeyState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyboardEvent {
     pub physical_key: Option<KeyCode>,
+    pub logical_key: LogicalKey,
+    pub location: KeyLocation,
     pub state: KeyState,
     pub logical_text: Option<String>,
     pub text: Option<String>,

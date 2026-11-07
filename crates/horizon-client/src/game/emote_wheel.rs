@@ -6,8 +6,10 @@
 use super::{Game, Screen};
 use horizon_client::{hud::HudBatch, text::Text};
 use horizon_client_platform::KeyCode;
+use horizon_client_platform::{
+    ClientWindowEvent as WindowEvent, KeyState as ElementState, MouseButton,
+};
 use std::time::{Duration, Instant};
-use winit::event::{ElementState, MouseButton, WindowEvent};
 
 /// Emotes on the wheel.
 pub(super) const SLOTS: usize = 8;
@@ -96,7 +98,6 @@ impl Game<'_> {
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                ..
             } => {
                 self.emote_wheel_click();
                 true

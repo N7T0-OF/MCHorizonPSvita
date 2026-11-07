@@ -6,5 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 description = "Platform-neutral interfaces shared by Horizon client frontends"
 
+[features]
+default = []
+cafe = []
+
+[dependencies]
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
+log = "0.4"
+
 [lints]
 workspace = true

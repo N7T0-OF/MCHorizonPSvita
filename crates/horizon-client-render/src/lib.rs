@@ -56,7 +56,7 @@ pub use horizon_world::json_folder;
 pub mod level_loading;
 pub mod light;
 pub mod lod;
-pub mod logging;
+pub use horizon_client_platform::logging;
 pub mod menu_blur;
 pub mod mesher;
 pub mod minimap;

@@ -81,6 +81,13 @@ struct HudBatch { scale: f32 }
 impl HudBatch { fn new(_size: [u32; 2]) -> Self { Self { scale: 2.0 } } }
 struct Config { width: u32, height: u32 }
 struct Renderer { config: Config }
+mod horizon_client {
+    pub mod presentation {
+        pub fn viewport_size(renderer: &crate::Renderer) -> [u32; 2] {
+            [renderer.config.width, renderer.config.height]
+        }
+    }
+}
 #[derive(Default)]
 struct Window { grabs: Cell<u32>, visible: Cell<bool>, fail: bool, warps: Cell<u32>, at: Cell<(f64, f64)> }
 impl Window {
@@ -352,8 +359,9 @@ fn main() {
             rust = folder / "capture.rs"
             binary = folder / ("capture.exe" if os.name == "nt" else "capture")
             rust.write_text(fixture, encoding="utf-8")
-            subprocess.run(["rustc", "--edition=2024", str(rust), "-o", str(binary)],
-                           check=True, capture_output=True, text=True, timeout=60)
+            built = subprocess.run(["rustc", "--edition=2024", str(rust), "-o", str(binary)],
+                                   capture_output=True, text=True, timeout=60)
+            self.assertEqual(built.returncode, 0, built.stderr)
             subprocess.run([str(binary)], check=True, capture_output=True, text=True, timeout=10)
 
 
@@ -365,8 +373,10 @@ use std::time::Instant;
 #[path = "MOUSE_PATH"] mod mouse;
 use mouse::{MouseLook, LookOptions, Rotation};
 struct ActiveEventLoop;
-struct DeviceId;
-enum DeviceEvent { MouseMotion { delta: (f64, f64) }, Other }
+struct EventLoop;
+trait EventLoopCtl {}
+impl EventLoopCtl for EventLoop {}
+enum ClientDeviceEvent { MouseMotion { delta: (f64, f64) } }
 #[derive(PartialEq)] enum Screen { Playing, Paused }
 struct Options { offscreen: bool }
 mod input_trace {
@@ -381,7 +391,7 @@ impl Game {
     // The input trace records the motion; it does not change the turn.
     fn note_input(&mut self, _: input_trace::InputOrigin, _: input_trace::TraceKind) {}
     // Handing input back from the controller does not change the turn either.
-    fn pad_yield_input(&mut self, _: &ActiveEventLoop) {}
+    fn pad_yield_input(&mut self, _: &dyn EventLoopCtl) {}
 METHOD
 }
 fn main() {
@@ -401,8 +411,8 @@ fn main() {
             screen: if playing { Screen::Playing } else { Screen::Paused },
             mouse: MouseLook::default(), last_input: Instant::now(),
         };
-        game.device_event(&ActiveEventLoop, DeviceId, DeviceEvent::MouseMotion { delta: (0.0, 0.0) });
-        game.device_event(&ActiveEventLoop, DeviceId, DeviceEvent::MouseMotion { delta: (20.0, -10.0) });
+        game.dispatch_platform_device_event(&EventLoop, ClientDeviceEvent::MouseMotion { delta: (0.0, 0.0) });
+        game.dispatch_platform_device_event(&EventLoop, ClientDeviceEvent::MouseMotion { delta: (20.0, -10.0) });
         let look = LookOptions { sensitivity: 0.5, smooth_camera: false, scoping: false, invert_x: false, invert_y: false };
         let (x, y) = game.mouse.handle_accumulated_movement(1.0, true, true, look).unwrap();
         let mut rotation = Rotation { x_rot: 0.0, y_rot: 0.0, x_rot_o: 0.0, y_rot_o: 0.0 };
@@ -414,7 +424,10 @@ fn main() {
 }
 '''
         fixture = fixture.replace("MOUSE_PATH", (ROOT / "crates/horizon-client-input/src/mouse.rs").as_posix())
-        fixture = fixture.replace("METHOD", method(source, "device_event"))
+        fixture = fixture.replace(
+            "METHOD",
+            method(source.replace("pub(super) fn", "fn"), "dispatch_platform_device_event"),
+        )
         self.run_fixture(fixture, "native-mouse")
 
     @unittest.skipUnless(shutil.which("rustc"), "requires Rust")

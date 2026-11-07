@@ -426,7 +426,10 @@ use horizon_client::{
     vanillagen::VanillaTerrain,
     world::World,
 };
-use horizon_client_platform::{KeyCode, Modifiers, MouseButton};
+use horizon_client_platform::{
+    ClientDeviceEvent, ClientWindowEvent as WindowEvent, ImeEvent, KeyCode,
+    KeyState as ElementState, LogicalKey, Modifiers, MouseButton, MouseScrollDelta,
+};
 use horizon_core::{
     biome::{BiomeZoom, obfuscate_seed},
     geometry::{Aabb, Direction},
@@ -480,11 +483,9 @@ use winit::{
     application::ApplicationHandler,
     error::EventLoopError,
     event::{
-        DeviceEvent, DeviceId, ElementState, MouseButton as WinitMouseButton, MouseScrollDelta,
-        WindowEvent,
+        DeviceEvent as WinitDeviceEvent, DeviceId as WinitDeviceId, WindowEvent as WinitWindowEvent,
     },
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode as WinitKeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
 };
 
@@ -2346,16 +2347,15 @@ fn ticking_chunk(world: &World, x: i32, z: i32) -> bool {
 /// `caps:swapescape`. For the keys whose meaning the keymap may remap, take the code
 /// from the keysym the keymap resolved instead.
 fn follow_keymap(event: &mut WindowEvent) {
-    use winit::keyboard::{Key, NamedKey};
     if let WindowEvent::KeyboardInput { event, .. } = event
-        && let Key::Named(named) = &event.logical_key
+        && let LogicalKey::Named(named) = &event.logical_key
     {
-        let code = match named {
-            NamedKey::Escape => WinitKeyCode::Escape,
-            NamedKey::CapsLock => WinitKeyCode::CapsLock,
+        let code = match named.as_str() {
+            "Escape" => KeyCode::Escape,
+            "CapsLock" => KeyCode::CapsLock,
             _ => return,
         };
-        event.physical_key = PhysicalKey::Code(code);
+        event.physical_key = Some(code);
     }
 }
 
@@ -2542,8 +2542,7 @@ struct Game<'a> {
     keys: horizon_client::held::HeldKeys,
     // Physical input is separate from remapped and toggled movement keys.
     physical_keys: HashSet<KeyCode>,
-    /// Physical key for the WindowEvent currently being dispatched, already translated once at
-    /// the Winit boundary. Screen handlers still receive Winit's WindowEvent for text/modifiers.
+    /// Physical key for the portable window event currently being dispatched.
     window_event_key: Option<KeyCode>,
     physical_buttons: HashSet<MouseButton>,
     drag_button: Option<MouseButton>,
@@ -17894,50 +17893,50 @@ impl ApplicationHandler for Game<'_> {
         self.apply_settings();
         self.previous = Instant::now();
     }
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let key = if self.window.as_ref().is_some_and(|w| w.id() == id)
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        event: WinitWindowEvent,
+    ) {
+        let ours = self.window.as_ref().is_some_and(|window| window.id() == id)
+            || (self.window.is_none() && self.options.headless);
+        let Some(event) = horizon_client_input::winit_adapter::from_winit_window_event(&event)
+        else {
+            return;
+        };
+        let key = if ours
             && let WindowEvent::KeyboardInput {
                 event,
                 is_synthetic: false,
-                ..
             } = &event
         {
             Some((event.clone(), glfw_modifiers(self.modifiers)))
         } else {
             None
         };
-        self.handle_window_event(
-            &WinitEventLoop::new(event_loop),
-            id,
-            event,
-            input_trace::InputOrigin::User,
-        );
+        if ours {
+            self.dispatch_platform_window_event(
+                &WinitEventLoop::new(event_loop),
+                event,
+                input_trace::InputOrigin::User,
+            );
+        }
         if let Some((event, modifiers)) = key {
             self.native_input_key(&event, modifiers);
         }
     }
-    fn device_event(&mut self, event_loop: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
-        // A composited view renders offscreen but its keyboard/mouse owner still
-        // controls a visible native window. A headless offscreen run never does.
-        if self.pending_save.is_none()
-            && self.captured
-            && self.focused
-            && self.keyboard_mouse
-            && (!self.options.offscreen || self.split_window)
-            && self.screen == Screen::Playing
-            && let DeviceEvent::MouseMotion { delta: (x, y) } = event
-        {
-            if x != 0.0 || y != 0.0 {
-                self.pad_yield_input(&WinitEventLoop::new(event_loop));
-            }
-            // MouseHandler.onMove with the pointer grabbed; applied once per frame.
-            self.note_input(
-                input_trace::InputOrigin::User,
-                input_trace::TraceKind::Motion { x, y },
-            );
-            self.mouse.on_move(0.0, 0.0, x, y, true, true);
-            self.last_input = Instant::now();
-        }
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _: WinitDeviceId,
+        event: WinitDeviceEvent,
+    ) {
+        let Some(event) = horizon_client_input::winit_adapter::from_winit_device_event(&event)
+        else {
+            return;
+        };
+        self.dispatch_platform_device_event(&WinitEventLoop::new(event_loop), event);
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.idle(&WinitEventLoop::new(event_loop));
@@ -17950,76 +17949,65 @@ impl ApplicationHandler for Game<'_> {
     }
 }
 
-/// winit's events for a window's game, with any loop: a headless client (#4951) has no
-/// winit loop and calls these from its own.
 impl Game<'_> {
-    /// winit's `window_event`. The control socket and the pad menu call it too, with the
-    /// input they make up.
-    pub(super) fn handle_window_event(
+    /// Shared platform-neutral window event path. Desktop, synthetic UI input,
+    /// replays, and native frontends all enter here after boundary conversion.
+    pub(super) fn dispatch_platform_window_event(
         &mut self,
         event_loop: &dyn EventLoopCtl,
-        id: WindowId,
+        event: WindowEvent,
+        origin: input_trace::InputOrigin,
+    ) {
+        self.dispatch_platform_window_event_inner(event_loop, event, origin);
+    }
+
+    fn dispatch_platform_window_event_inner(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
         mut event: WindowEvent,
         origin: input_trace::InputOrigin,
     ) {
-        // A headless game has no window: its events (the frame, the control socket's input)
-        // carry `WindowId::dummy()`.
-        let ours = match &self.window {
-            Some(w) => w.id() == id,
-            None => self.options.headless,
-        };
-        if !ours {
-            return;
-        }
         self.window_event_key = None;
         follow_keymap(&mut event);
         let keyboard = match &event {
-            WindowEvent::KeyboardInput { event, .. } => Some(
-                horizon_client_input::winit_adapter::from_winit_key_event(event),
-            ),
+            WindowEvent::KeyboardInput { event, .. } => Some(event.clone()),
             _ => None,
         };
         self.window_event_key = keyboard.as_ref().and_then(|event| event.physical_key);
         // MacosUtil.setCtrlClickEmulatesRightClick: Control + left click is a right click.
-        if let WindowEvent::MouseInput { state, button, .. } = &mut event
-            && *button == WinitMouseButton::Left
+        if let WindowEvent::MouseInput { state, button } = &mut event
+            && *button == MouseButton::Left
             && self.right_click_emulation.is_right_click(
                 *state == ElementState::Pressed,
                 self.modifiers.control_key(),
                 cfg!(target_os = "macos") && self.settings.ctrl_click_emulates_right_click,
             )
         {
-            *button = WinitMouseButton::Right;
+            *button = MouseButton::Right;
         }
         // Who caused it, before the event is handled: the trace wants the
         // window's own keys, never the ones the socket made up.
         self.trace_window_event(origin, &event);
         if let (Some(event), Some(key)) = (keyboard.as_ref(), self.window_event_key) {
-            if event.state == horizon_client_platform::KeyState::Pressed {
+            if event.state == ElementState::Pressed {
                 self.physical_keys.insert(key);
                 horizon_client::keybinds::learn_layout(key, event.unmodified_text.as_deref());
             } else {
                 self.physical_keys.remove(&key);
             }
         }
-        if let WindowEvent::MouseInput { state, button, .. } = &event {
+        if let WindowEvent::MouseInput { state, button } = &event {
             if *state == ElementState::Pressed {
-                self.physical_buttons.insert(
-                    horizon_client_input::winit_adapter::from_winit_mouse(*button),
-                );
+                self.physical_buttons.insert(*button);
             } else {
-                self.physical_buttons.remove(
-                    &horizon_client_input::winit_adapter::from_winit_mouse(*button),
-                );
+                self.physical_buttons.remove(button);
             }
         }
         let mouse = if !self.pad_synthetic_input()
-            && let WindowEvent::MouseInput { state, button, .. } = &event
+            && let WindowEvent::MouseInput { state, button } = &event
         {
             Some((
-                glfw_button(horizon_client_input::winit_adapter::from_winit_mouse(
-                    *button,
-                )),
+                glfw_button(*button),
                 *state == ElementState::Pressed,
                 glfw_modifiers(self.modifiers),
             ))
@@ -18038,6 +18026,38 @@ impl Game<'_> {
             self.native_mouse_button_post(button, pressed, modifiers);
         }
     }
+
+    /// Shared platform-neutral relative pointing-device path.
+    pub(super) fn dispatch_platform_device_event(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
+        event: ClientDeviceEvent,
+    ) {
+        // A composited view renders offscreen but its keyboard/mouse owner still
+        // controls a visible native window. A headless offscreen run never does.
+        if self.pending_save.is_none()
+            && self.captured
+            && self.focused
+            && self.keyboard_mouse
+            && (!self.options.offscreen || self.split_window)
+            && self.screen == Screen::Playing
+            && let ClientDeviceEvent::MouseMotion { delta: (x, y) } = event
+        {
+            if x != 0.0 || y != 0.0 {
+                self.pad_yield_input(event_loop);
+            }
+            // MouseHandler.onMove with the pointer grabbed; applied once per frame.
+            self.note_input(
+                input_trace::InputOrigin::User,
+                input_trace::TraceKind::Motion { x, y },
+            );
+            self.mouse.on_move(0.0, 0.0, x, y, true, true);
+            self.last_input = Instant::now();
+        }
+    }
+}
+
+impl Game<'_> {
     /// One window event, in the order vanilla's `KeyboardHandler` and `MouseHandler` see it.
     ///
     /// A controller doesn't come through here in play: `pad_action` goes straight to the mappings
@@ -18057,7 +18077,7 @@ impl Game<'_> {
             self.drag_button = None;
         }
         if let WindowEvent::ModifiersChanged(m) = &event {
-            self.modifiers = horizon_client_input::winit_adapter::from_winit_modifiers(m.state());
+            self.modifiers = *m;
             horizon_client_input::modifiers::reconcile(
                 self.modifiers,
                 &mut self.physical_keys,
@@ -18088,7 +18108,7 @@ impl Game<'_> {
             event: key_event, ..
         } = &event
             && key_event.state == ElementState::Pressed
-            && matches!(key_event.physical_key, PhysicalKey::Unidentified(_))
+            && key_event.physical_key.is_none()
             && let Some(text) = key_event.text.as_deref()
         {
             let text: String = text.chars().filter(|c| !c.is_control()).collect();
@@ -18188,7 +18208,7 @@ impl Game<'_> {
                 }
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,
-                    button: WinitMouseButton::Left,
+                    button: MouseButton::Left,
                     ..
                 } if !upgrade.is_canceled() => {
                     let (w, h) = self.gui_size();
@@ -18354,10 +18374,7 @@ impl Game<'_> {
             if let WindowEvent::MouseInput { state, button, .. } = &event
                 && !self.pad_synthetic_input()
             {
-                self.track_drag_button(
-                    horizon_client_input::winit_adapter::from_winit_mouse(*button),
-                    *state == ElementState::Pressed,
-                );
+                self.track_drag_button(*button, *state == ElementState::Pressed);
             }
             // The emote key let go over the wheel, a click on it.
             if self.screen == Screen::EmoteWheel && self.emote_wheel_event(&event) {
@@ -18384,12 +18401,7 @@ impl Game<'_> {
                 && !self.pad_synthetic_input()
                 && let Some(screen) = self.screen_view_now()
             {
-                let (button, modifiers) = (
-                    glfw_button(horizon_client_input::winit_adapter::from_winit_mouse(
-                        *button,
-                    )),
-                    glfw_modifiers(self.modifiers),
-                );
+                let (button, modifiers) = (glfw_button(*button), glfw_modifiers(self.modifiers));
                 let mut canceled = false;
                 if *state == ElementState::Pressed {
                     self.native_screen_mouse_button_pressed_pre(
@@ -18424,13 +18436,11 @@ impl Game<'_> {
                     self.begin_closing_save(true)?;
                 }
                 // Input method composition: the committed text types like a key's text.
-                WindowEvent::Ime(winit::event::Ime::Commit(text)) => self.ime_commit(&text),
-                WindowEvent::Ime(winit::event::Ime::Preedit(text, cursor)) => {
+                WindowEvent::Ime(ImeEvent::Commit(text)) => self.ime_commit(&text),
+                WindowEvent::Ime(ImeEvent::Preedit(text, cursor)) => {
                     self.ime_preedit(&text, cursor)
                 }
-                WindowEvent::Ime(winit::event::Ime::Disabled) => {
-                    horizon_client::preedit::set_preedit(None)
-                }
+                WindowEvent::Ime(ImeEvent::Disabled) => horizon_client::preedit::set_preedit(None),
                 WindowEvent::Resized(size) => {
                     if let Some(r) = &mut self.renderer {
                         horizon_client::presentation::resize(r, size.width, size.height);
@@ -18661,29 +18671,29 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.command_prompt.is_some() => {
-                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
                         self.command_prompt_click();
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.link_prompt.is_some() => {
-                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
                         self.link_prompt_click();
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.code_of_conduct.is_some() => {
-                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
                         self.code_of_conduct_click()?;
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. }
                     if self.server_packs.prompt.is_some() =>
                 {
-                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
                         self.pack_prompt_click()?;
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.dialog_open() => {
-                    if button == WinitMouseButton::Left {
+                    if button == MouseButton::Left {
                         if state == ElementState::Pressed {
                             self.dialog_click()?;
                         } else {
@@ -18693,26 +18703,24 @@ impl Game<'_> {
                 }
                 // ConnectScreen's Cancel, under the prompts and dialogs above.
                 WindowEvent::MouseInput { state, button, .. } if self.remote_loading() => {
-                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
                         self.connect_screen_click()?;
                     }
                 }
                 WindowEvent::MouseInput { .. } if self.screen == Screen::Win => {}
                 WindowEvent::MouseInput { state, button, .. } if self.screen == Screen::Options => {
                     if self.options_waiting_for_key() && state == ElementState::Pressed {
-                        self.options_bind_mouse(
-                            horizon_client_input::winit_adapter::from_winit_mouse(button),
-                        )?;
-                    } else if matches!(button, WinitMouseButton::Left | WinitMouseButton::Right) {
+                        self.options_bind_mouse(button)?;
+                    } else if matches!(button, MouseButton::Left | MouseButton::Right) {
                         self.options_mouse(
                             state == ElementState::Pressed,
-                            button == WinitMouseButton::Right,
+                            button == MouseButton::Right,
                         )?;
                     }
                 }
                 WindowEvent::MouseInput {
                     state: ElementState::Released,
-                    button: WinitMouseButton::Left,
+                    button: MouseButton::Left,
                     ..
                 } if self.title.is_some() && self.screen != Screen::Options => {
                     if let Some(title) = &mut self.title {
@@ -18722,7 +18730,7 @@ impl Game<'_> {
                 }
                 WindowEvent::MouseInput {
                     state,
-                    button: WinitMouseButton::Left,
+                    button: MouseButton::Left,
                     ..
                 } if self.title.is_some() && state == ElementState::Pressed => {
                     let size = self
@@ -18752,7 +18760,7 @@ impl Game<'_> {
                 // click on the selected row does that).
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,
-                    button: WinitMouseButton::Middle,
+                    button: MouseButton::Middle,
                     ..
                 } if self.title.is_some() && self.screen != Screen::Options => {
                     let size = self
@@ -18767,7 +18775,7 @@ impl Game<'_> {
                 }
                 WindowEvent::MouseInput { .. } if self.title.is_some() => {}
                 WindowEvent::MouseInput { state, button, .. } if self.book.is_some() => {
-                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
                         let size = self
                             .renderer
                             .as_ref()
@@ -18777,7 +18785,7 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.sign_edit.is_some() => {
-                    if state == ElementState::Pressed && button == WinitMouseButton::Left {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
                         let size = self
                             .renderer
                             .as_ref()
@@ -18786,13 +18794,7 @@ impl Game<'_> {
                         self.sign_edit_click(size);
                     }
                 }
-                WindowEvent::MouseInput {
-                    state,
-                    button: winit_button,
-                    ..
-                } => {
-                    let button =
-                        horizon_client_input::winit_adapter::from_winit_mouse(winit_button);
+                WindowEvent::MouseInput { state, button, .. } => {
                     let pressed = state == ElementState::Pressed;
                     if matches!(self.screen, Screen::Inventory | Screen::Creative)
                         && let Some(key) = self
@@ -19651,10 +19653,8 @@ impl Game<'_> {
             if self.options.offscreen {
                 // Offscreen frames don't wait for the window to be drawn: an
                 // occluded window (a locked macOS session) gets no redraws.
-                let id = w.id();
-                self.handle_window_event(
+                self.dispatch_platform_window_event(
                     event_loop,
-                    id,
                     WindowEvent::RedrawRequested,
                     input_trace::InputOrigin::Game,
                 );
@@ -19663,9 +19663,8 @@ impl Game<'_> {
             }
         } else if self.options.headless {
             // The headless loop paces the frames itself (`run_headless`).
-            self.handle_window_event(
+            self.dispatch_platform_window_event(
                 event_loop,
-                WindowId::dummy(),
                 WindowEvent::RedrawRequested,
                 input_trace::InputOrigin::Game,
             );
@@ -22165,15 +22164,22 @@ impl Loading {
         horizon_client::hud::GUI_SCALE.store(self.settings.gui_scale, Ordering::Relaxed);
         self.window = Some(window);
     }
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, mut event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        event: WinitWindowEvent,
+    ) {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
         }
+        let Some(mut event) = horizon_client_input::winit_adapter::from_winit_window_event(&event)
+        else {
+            return;
+        };
         follow_keymap(&mut event);
         let keyboard = match &event {
-            WindowEvent::KeyboardInput { event, .. } => Some(
-                horizon_client_input::winit_adapter::from_winit_key_event(event),
-            ),
+            WindowEvent::KeyboardInput { event, .. } => Some(event.clone()),
             _ => None,
         };
         let key = keyboard.as_ref().and_then(|event| event.physical_key);
@@ -22387,13 +22393,23 @@ impl ApplicationHandler for App {
             App::Ready(game) => game.resumed(event_loop),
         }
     }
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        event: WinitWindowEvent,
+    ) {
         match self {
             App::Loading(loading) => loading.window_event(event_loop, id, event),
             App::Ready(game) => game.window_event(event_loop, id, event),
         }
     }
-    fn device_event(&mut self, event_loop: &ActiveEventLoop, id: DeviceId, event: DeviceEvent) {
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WinitDeviceId,
+        event: WinitDeviceEvent,
+    ) {
         if let App::Ready(game) = self {
             game.device_event(event_loop, id, event);
         }

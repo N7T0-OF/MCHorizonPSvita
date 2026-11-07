@@ -1507,6 +1507,11 @@ dependencies = [
 [[package]]
 name = "horizon-client-platform"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "flate2",
+ "log",
+]
 
 [[package]]
 name = "horizon-client-render"

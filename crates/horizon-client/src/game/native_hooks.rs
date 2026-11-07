@@ -996,7 +996,7 @@ use super::{
 };
 use horizon_assets::item_model::StackView;
 use horizon_client::mod_api::{
-    self, NativeCamera, NativeCommand, NativeDispensed, NativeLifecycleContext,
+    self, InputKeyboardEvent, NativeCamera, NativeCommand, NativeDispensed, NativeLifecycleContext,
     NativeNoteBlockChange, NativeServerPlayer, RecipeBookCategory, ServerTickPhase, WorldPhase,
 };
 use horizon_client::mod_api::{AttachmentResult, Attachments, Holder, Suggestion};
@@ -2621,7 +2621,7 @@ impl Game<'_> {
     /// A real window key event after handling, including repeats and consumed shortcuts.
     /// Receives the original physical/logical key, text, location, state and repeat flag.
     /// Modifier bits use the screen hooks' GLFW encoding. Not cancellable.
-    pub(super) fn native_input_key(&mut self, event: &winit::event::KeyEvent, modifiers: u32) {
+    pub(super) fn native_input_key(&mut self, event: &InputKeyboardEvent, modifiers: u32) {
         mod_api::dispatch_input_key(self, mod_api::mods(), event, modifiers);
     }
     /// Raw mouse button input on any screen, before dispatch; cancel skips dispatch and Post.

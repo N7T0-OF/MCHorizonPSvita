@@ -32,13 +32,11 @@ use horizon_client::{
     widgets::{self, Kind, Target},
 };
 use horizon_client_input::snap;
-use horizon_client_platform::KeyCode;
-use std::time::Instant;
-use winit::{
-    dpi::PhysicalPosition,
-    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    window::WindowId,
+use horizon_client_platform::{
+    ClientWindowEvent as WindowEvent, KeyCode, KeyState as ElementState, MouseButton,
+    MouseScrollDelta, PhysicalPosition, TouchPhase,
 };
+use std::time::Instant;
 
 /// How far the stick must lean to step focus.
 const STICK_STEP: f32 = 0.55;
@@ -528,32 +526,24 @@ impl Game<'_> {
 
     /// Send the window a pointer move to `at` (GUI pixels), as the mouse would.
     fn pad_pointer_to(&mut self, event_loop: &dyn EventLoopCtl, at: (f32, f32)) {
-        let (Some(window), Some(batch)) = (self.window.as_ref(), self.gui_scale()) else {
+        let (Some(_window), Some(batch)) = (self.window.as_ref(), self.gui_scale()) else {
             return;
         };
-        let id = window.id();
         let at = (
             at.0.clamp(0.0, batch.width - 1.0),
             at.1.clamp(0.0, batch.height - 1.0),
         );
         let position =
             PhysicalPosition::new(f64::from(at.0 * batch.scale), f64::from(at.1 * batch.scale));
-        self.pad_synthetic_event(
-            event_loop,
-            id,
-            WindowEvent::CursorMoved {
-                device_id: DeviceId::dummy(),
-                position,
-            },
-        );
+        self.pad_synthetic_event(event_loop, WindowEvent::CursorMoved { position });
         // Read back what the window made of it, so a real mouse move shows.
         self.pad.menu.pos = Some(self.cursor);
     }
 
     fn pad_pointer_button(&mut self, event_loop: &dyn EventLoopCtl, right: bool, pressed: bool) {
-        let Some(id) = self.window.as_ref().map(|w| w.id()) else {
+        if self.window.is_none() {
             return;
-        };
+        }
         self.pad.menu.held[usize::from(right)] = pressed;
         let button = if right {
             MouseButton::Right
@@ -565,28 +555,19 @@ impl Game<'_> {
         } else {
             ElementState::Released
         };
-        self.pad_synthetic_event(
-            event_loop,
-            id,
-            WindowEvent::MouseInput {
-                device_id: DeviceId::dummy(),
-                state,
-                button,
-            },
-        );
+        self.pad_synthetic_event(event_loop, WindowEvent::MouseInput { state, button });
     }
 
     /// A click (press and release) at a point, the pointer staying there.
     /// A pointer event of the pad's or the keyboard's, as the window would
     /// send it (marked, so it isn't taken for the real mouse).
-    fn pad_synthetic_event(
-        &mut self,
-        event_loop: &dyn EventLoopCtl,
-        id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn pad_synthetic_event(&mut self, event_loop: &dyn EventLoopCtl, event: WindowEvent) {
         let was = std::mem::replace(&mut self.pad.menu.synthetic, true);
-        self.handle_window_event(event_loop, id, event, super::input_trace::InputOrigin::Game);
+        self.dispatch_platform_window_event(
+            event_loop,
+            event,
+            super::input_trace::InputOrigin::Game,
+        );
         self.pad.menu.synthetic = was;
     }
 
@@ -652,14 +633,12 @@ impl Game<'_> {
     fn pad_wheel(&mut self, event_loop: &dyn EventLoopCtl, x: f32, y: f32) {
         // Another row can scroll under the armed button's rect.
         self.pad.menu.armed = None;
-        let Some(id) = self.window.as_ref().map(|w| w.id()) else {
+        if self.window.is_none() {
             return;
-        };
+        }
         self.pad_synthetic_event(
             event_loop,
-            id,
             WindowEvent::MouseWheel {
-                device_id: DeviceId::dummy(),
                 delta: MouseScrollDelta::LineDelta(x, y),
                 phase: TouchPhase::Moved,
             },
@@ -2075,15 +2054,8 @@ impl Game<'_> {
         menu.pending = None;
         menu.nudge = None;
         let real = menu.real_pointer;
-        if let (Some(position), Some(id)) = (real, self.window.as_ref().map(|w| w.id())) {
-            self.pad_synthetic_event(
-                event_loop,
-                id,
-                WindowEvent::CursorMoved {
-                    device_id: DeviceId::dummy(),
-                    position,
-                },
-            );
+        if let Some(position) = real.filter(|_| self.window.is_some()) {
+            self.pad_synthetic_event(event_loop, WindowEvent::CursorMoved { position });
         }
     }
 

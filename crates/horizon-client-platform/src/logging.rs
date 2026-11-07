@@ -17,6 +17,22 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, NaiveDate};
 
+#[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+unsafe extern "C" {
+    fn OSReport(format: *const std::ffi::c_char, ...);
+}
+
+#[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+fn serial_report(line: &str) {
+    let line = line.replace('\0', "\\0");
+    let Ok(line) = std::ffi::CString::new(line) else {
+        return;
+    };
+    // Cafe std routes stderr to OSConsoleWrite; OSReport additionally reaches the serial/debug
+    // report channel used by hardware and emulator diagnostics.
+    unsafe { OSReport(b"%s\n\0".as_ptr().cast(), line.as_ptr()) };
+}
+
 /// DefaultRolloverStrategy's default `max`: archives kept for one date.
 pub const MAX_ARCHIVES_PER_DAY: u32 = 7;
 /// Formatted lines kept in memory for crash reports.
@@ -300,6 +316,10 @@ impl Writer {
                     lines,
                     stderr: message,
                 } => {
+                    #[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+                    for line in &lines {
+                        serial_report(line);
+                    }
                     if let Some(message) = message {
                         let _ = writeln!(stderr.lock(), "{message}");
                     }
@@ -438,6 +458,9 @@ impl log::Log for Logger {
             ),
             _ => {}
         }
+        #[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+        let stderr = None;
+        #[cfg(not(all(feature = "cafe", target_arch = "powerpc")))]
         let stderr = ours(record.target()).then(|| message.clone());
         self.send(thread, level, &message, stderr);
         if gate == Gate::Last {

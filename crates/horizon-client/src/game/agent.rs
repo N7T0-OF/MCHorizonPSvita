@@ -22,6 +22,10 @@ use horizon_client::{
 };
 use horizon_client_platform::KeyCode;
 use horizon_client_platform::MouseButton;
+use horizon_client_platform::{
+    ClientWindowEvent as WindowEvent, KeyState as ElementState, MouseScrollDelta, PhysicalPosition,
+    TouchPhase,
+};
 use horizon_core::geometry::Vec3;
 use horizon_world::registry::BlockStateId;
 use navigation::{Cell, Node, Plan, Progress};
@@ -30,10 +34,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::mpsc::Sender,
     time::{Duration, Instant},
-};
-use winit::{
-    dpi::PhysicalPosition,
-    event::{DeviceId, ElementState, MouseScrollDelta, TouchPhase, WindowEvent},
 };
 
 pub(super) const HELP: &[&str] = &[
@@ -932,44 +932,37 @@ impl Game<'_> {
         points: &[(f32, f32)],
         button: MouseButton,
     ) -> Result<()> {
-        let id = self.window.as_ref().ok_or("no window yet")?.id();
+        if self.window.is_none() {
+            return Err("no window yet".into());
+        }
         let scale = self
             .renderer
             .as_ref()
             .map(|r| horizon_client::hud::HudBatch::new([r.config.width, r.config.height]).scale)
             .ok_or("no renderer yet")?;
-        let device_id = DeviceId::dummy();
         for (i, &(x, y)) in points.iter().enumerate() {
             let position = PhysicalPosition::new(f64::from(x * scale), f64::from(y * scale));
-            self.handle_window_event(
+            self.dispatch_platform_window_event(
                 event_loop,
-                id,
-                WindowEvent::CursorMoved {
-                    device_id,
-                    position,
-                },
+                WindowEvent::CursorMoved { position },
                 super::input_trace::InputOrigin::Agent,
             );
             if i == 0 {
-                self.handle_window_event(
+                self.dispatch_platform_window_event(
                     event_loop,
-                    id,
                     WindowEvent::MouseInput {
-                        device_id,
                         state: ElementState::Pressed,
-                        button: horizon_client_input::winit_adapter::to_winit_mouse(button),
+                        button,
                     },
                     super::input_trace::InputOrigin::Agent,
                 );
             }
         }
-        self.handle_window_event(
+        self.dispatch_platform_window_event(
             event_loop,
-            id,
             WindowEvent::MouseInput {
-                device_id,
                 state: ElementState::Released,
-                button: horizon_client_input::winit_adapter::to_winit_mouse(button),
+                button,
             },
             super::input_trace::InputOrigin::Agent,
         );
@@ -1527,7 +1520,9 @@ impl Game<'_> {
             "scroll-at" => {
                 let (x, y) = (a.f64(0, "X")? as f32, a.f64(1, "Y")? as f32);
                 let steps = a.f64(2, "STEPS")? as f32;
-                let id = self.window.as_ref().ok_or("no window yet")?.id();
+                if self.window.is_none() {
+                    return Err("no window yet".into());
+                }
                 let scale = self
                     .renderer
                     .as_ref()
@@ -1535,23 +1530,16 @@ impl Game<'_> {
                         horizon_client::hud::HudBatch::new([r.config.width, r.config.height]).scale
                     })
                     .ok_or("no renderer yet")?;
-                let device_id = DeviceId::dummy();
                 let position = PhysicalPosition::new(f64::from(x * scale), f64::from(y * scale));
-                self.handle_window_event(
+                self.dispatch_platform_window_event(
                     event_loop,
-                    id,
-                    WindowEvent::CursorMoved {
-                        device_id,
-                        position,
-                    },
+                    WindowEvent::CursorMoved { position },
                     super::input_trace::InputOrigin::Agent,
                 );
                 for _ in 0..steps.abs() as u32 {
-                    self.handle_window_event(
+                    self.dispatch_platform_window_event(
                         event_loop,
-                        id,
                         WindowEvent::MouseWheel {
-                            device_id,
                             delta: MouseScrollDelta::LineDelta(0.0, steps.signum()),
                             phase: TouchPhase::Moved,
                         },

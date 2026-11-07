@@ -18,8 +18,11 @@ class InputKeyHookTests(unittest.TestCase):
         fixture = r"""
 type WindowId = i32;
 struct ActiveEventLoop;
-struct Window;
-impl Window { fn id(&self) -> i32 { 7 } }
+struct WinitEventLoop;
+impl WinitEventLoop { fn new(_: &ActiveEventLoop) -> Self { Self } }
+struct Window { id: i32 }
+impl Window { fn id(&self) -> i32 { self.id } }
+struct Options { headless: bool }
 mod input_trace {
     #[derive(Clone, Copy)]
     pub enum InputOrigin { User, Agent, Game }
@@ -27,13 +30,23 @@ mod input_trace {
 #[derive(Clone, Debug, PartialEq)]
 struct KeyEvent { physical_key: i32, logical_key: &'static str, location: i32,
                   text: &'static str, pressed: bool, repeat: bool }
+#[derive(Clone)]
 enum WindowEvent { KeyboardInput { event: KeyEvent, is_synthetic: bool }, Other }
+type WinitWindowEvent = WindowEvent;
+mod horizon_client_input {
+    pub mod winit_adapter {
+        use super::super::{WindowEvent, WinitWindowEvent};
+        pub fn from_winit_window_event(event: &WinitWindowEvent) -> Option<WindowEvent> {
+            Some(event.clone())
+        }
+    }
+}
 fn glfw_modifiers(bits: u32) -> u32 { bits }
-struct Game { window: Option<Window>, modifiers: u32, early: bool,
+struct Game { window: Option<Window>, options: Options, modifiers: u32, early: bool,
               calls: Vec<&'static str>, observed: Vec<(KeyEvent, u32)> }
 impl Game {
-    fn handle_window_event(&mut self, _: &ActiveEventLoop, _: WindowId, mut event: WindowEvent,
-                           _: input_trace::InputOrigin) {
+    fn dispatch_platform_window_event(&mut self, _: &WinitEventLoop, mut event: WindowEvent,
+                                      _: input_trace::InputOrigin) {
         self.calls.push("handle"); self.modifiers = 0;
         if let WindowEvent::KeyboardInput { event, .. } = &mut event { event.physical_key = 99; event.text = ""; }
         if self.early { return; }
@@ -52,18 +65,22 @@ fn all_actions_consumption_and_window_gates() {
                 text: "z", pressed, repeat };
             for (window, id, synthetic, fires) in [(true,7,false,true), (true,8,false,false),
                 (true,7,true,false), (false,7,false,false)] {
-                let mut game = Game { window: window.then_some(Window), modifiers: 5, early,
+                let mut game = Game { window: window.then_some(Window { id: 7 }),
+                    options: Options { headless: false }, modifiers: 5, early,
                     calls: vec![], observed: vec![] };
                 game.window_event(&ActiveEventLoop, id, WindowEvent::KeyboardInput { event: original.clone(), is_synthetic: synthetic });
-                let mut expected = vec!["handle"];
-                if !early { expected.push("finish"); }
+                let dispatched = window && id == 7;
+                let mut expected = vec![];
+                if dispatched { expected.push("handle"); }
+                if dispatched && !early { expected.push("finish"); }
                 if fires { expected.push("hook"); }
                 assert_eq!(game.calls, expected);
                 assert_eq!(game.observed, if fires { vec![(original.clone(),5)] } else { vec![] });
             }
         }
     }
-    let mut game = Game { window: Some(Window), modifiers: 5, early: false, calls: vec![], observed: vec![] };
+    let mut game = Game { window: Some(Window { id: 7 }), options: Options { headless: false },
+        modifiers: 5, early: false, calls: vec![], observed: vec![] };
     game.window_event(&ActiveEventLoop, 7, WindowEvent::Other);
     assert!(game.observed.is_empty());
 }

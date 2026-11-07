@@ -5,7 +5,13 @@
 use super::event_loop::{EventLoopControl, EventLoopCtl, WinitEventLoop};
 use super::*;
 use horizon_client::no_resources::{Action, DOWNLOAD_URL, NoResources};
-use winit::event::MouseButton;
+use winit::{
+    event::{
+        ElementState as WinitElementState, MouseButton as WinitMouseButton,
+        WindowEvent as WinitWindowEvent,
+    },
+    keyboard::{KeyCode as WinitKeyCode, PhysicalKey},
+};
 
 struct Missing {
     window: Option<Arc<Window>>,
@@ -126,30 +132,35 @@ impl ApplicationHandler for Missing {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        event: WinitWindowEvent,
+    ) {
         let Some(window) = self.window.clone().filter(|w| w.id() == id) else {
             return;
         };
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
+            WinitWindowEvent::CloseRequested => event_loop.exit(),
+            WinitWindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
                     horizon_client::presentation::resize(r, size.width, size.height);
                 }
                 window.request_redraw();
             }
-            WindowEvent::RedrawRequested => self.draw(),
-            WindowEvent::CursorMoved { position, .. } => {
+            WinitWindowEvent::RedrawRequested => self.draw(),
+            WinitWindowEvent::CursorMoved { position, .. } => {
                 self.pointer = (position.x, position.y);
                 window.request_redraw();
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Released,
-                button: MouseButton::Left,
+            WinitWindowEvent::MouseInput {
+                state: WinitElementState::Released,
+                button: WinitMouseButton::Left,
                 ..
             } => self.click(event_loop),
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed
+            WinitWindowEvent::KeyboardInput { event, .. }
+                if event.state == WinitElementState::Pressed
                     && matches!(event.physical_key, PhysicalKey::Code(WinitKeyCode::Escape)) =>
             {
                 event_loop.exit()

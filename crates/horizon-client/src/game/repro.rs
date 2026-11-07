@@ -19,6 +19,10 @@ use super::event_loop::EventLoopCtl;
 use super::input_trace::{InputOrigin, TraceEvent, TraceKind};
 use super::{Game, Screen};
 use horizon_client::{Result, gamepad::Button, keybinds, text::Text, title::world_management};
+use horizon_client_platform::{
+    ClientWindowEvent as WindowEvent, KeyState as ElementState, MouseScrollDelta, PhysicalPosition,
+    TouchPhase,
+};
 use horizon_core::geometry::Vec3;
 use horizon_telemetry::scrub::Scrubber;
 use serde::Deserialize;
@@ -30,11 +34,6 @@ use std::{
     sync::mpsc::{self, Receiver, Sender, TryRecvError},
     thread,
     time::{Duration, Instant, SystemTime},
-};
-use winit::{
-    dpi::PhysicalPosition,
-    event::{DeviceId, ElementState, MouseScrollDelta, TouchPhase, WindowEvent},
-    window::WindowId,
 };
 
 pub(super) const HELP: &[&str] = &[
@@ -1223,11 +1222,6 @@ impl Game<'_> {
 
     /// One recorded event, fed back. False when it is not replayed.
     fn replay_event(&mut self, event: TraceEvent, event_loop: &dyn EventLoopCtl) -> bool {
-        let id = match &self.window {
-            Some(window) => window.id(),
-            None => WindowId::dummy(),
-        };
-        let device_id = DeviceId::dummy();
         match event.kind {
             TraceKind::Command { line } => {
                 let name = line.split_whitespace().next().unwrap_or("");
@@ -1254,14 +1248,9 @@ impl Game<'_> {
                 } else {
                     ElementState::Released
                 };
-                self.handle_window_event(
+                self.dispatch_platform_window_event(
                     event_loop,
-                    id,
-                    WindowEvent::MouseInput {
-                        device_id,
-                        state,
-                        button: horizon_client_input::winit_adapter::to_winit_mouse(button),
-                    },
+                    WindowEvent::MouseInput { state, button },
                     InputOrigin::Game,
                 );
                 true
@@ -1272,11 +1261,9 @@ impl Game<'_> {
                 } else {
                     MouseScrollDelta::PixelDelta(PhysicalPosition::new(x, y))
                 };
-                self.handle_window_event(
+                self.dispatch_platform_window_event(
                     event_loop,
-                    id,
                     WindowEvent::MouseWheel {
-                        device_id,
                         delta,
                         phase: TouchPhase::Moved,
                     },
@@ -1285,11 +1272,9 @@ impl Game<'_> {
                 true
             }
             TraceKind::Cursor { x, y } => {
-                self.handle_window_event(
+                self.dispatch_platform_window_event(
                     event_loop,
-                    id,
                     WindowEvent::CursorMoved {
-                        device_id,
                         position: PhysicalPosition::new(x, y),
                     },
                     InputOrigin::Game,

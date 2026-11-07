@@ -10,6 +10,9 @@
 //! (game/repro.rs).
 use super::{Game, Screen};
 use horizon_client::{Result, keybinds};
+use horizon_client_platform::{
+    ClientWindowEvent as WindowEvent, KeyState as ElementState, MouseScrollDelta,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -17,7 +20,6 @@ use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 
 pub(super) const HELP: &[&str] = &[
     "input-log [--since SEQ] [--limit N] [--origin user|agent|game]  recent input and who caused it",
@@ -470,9 +472,7 @@ impl Game<'_> {
             WindowEvent::MouseInput { state, button, .. } => self.note_input(
                 origin,
                 TraceKind::Mouse {
-                    button: keybinds::mouse_name(
-                        horizon_client_input::winit_adapter::from_winit_mouse(*button),
-                    ),
+                    button: keybinds::mouse_name(*button),
                     action: match state {
                         ElementState::Pressed => "down".to_owned(),
                         ElementState::Released => "up".to_owned(),

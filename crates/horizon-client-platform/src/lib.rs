@@ -1,7 +1,15 @@
 //! Platform-neutral contracts used by Horizon's client frontends.
 
+pub mod events;
 pub mod input;
-pub use input::{KeyCode, KeyState, KeyboardEvent, Modifiers, MouseButton};
+pub mod logging;
+pub use events::{
+    ClientDeviceEvent, ClientWindowEvent, ImeEvent, MouseScrollDelta, PhysicalPosition,
+    PhysicalSize, TouchPhase,
+};
+pub use input::{
+    KeyCode, KeyLocation, KeyState, KeyboardEvent, LogicalKey, Modifiers, MouseButton,
+};
 
 use std::time::{Duration, Instant};
 

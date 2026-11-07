@@ -8,8 +8,9 @@ use horizon_client::{
     options_ui::{Event, OptionsUi, Page},
     widgets::{Kind, Target},
 };
-use horizon_client_platform::{KeyCode, Modifiers};
-use winit::event::MouseButton as WinitMouseButton;
+use horizon_client_platform::{
+    ClientWindowEvent as WindowEvent, KeyCode, KeyState as ElementState, Modifiers, MouseButton,
+};
 
 #[derive(Default)]
 pub(super) struct StartupMenu {
@@ -784,7 +785,7 @@ impl Loading {
                 if self.menu.key_focus_release() {
                     self.update_menu_cursor();
                 }
-                if *state == ElementState::Pressed && *button == WinitMouseButton::Left {
+                if *state == ElementState::Pressed && *button == MouseButton::Left {
                     let (cx, cy) = self.menu.cursor;
                     self.menu.key_origin = self
                         .menu_key_targets()
@@ -958,9 +959,8 @@ impl Loading {
         let was = std::mem::replace(&mut self.menu.key_synthetic, true);
         for state in [ElementState::Pressed, ElementState::Released] {
             let click = WindowEvent::MouseInput {
-                device_id: DeviceId::dummy(),
                 state,
-                button: WinitMouseButton::Left,
+                button: MouseButton::Left,
             };
             if let Err(e) = self.menu_event(event_loop, click, None, None) {
                 log::warn!("Horizon: keyboard focus click: {e}");
@@ -1029,8 +1029,7 @@ impl Loading {
             }
             WindowEvent::RedrawRequested => self.draw(),
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.menu.modifiers =
-                    horizon_client_input::winit_adapter::from_winit_modifiers(modifiers.state());
+                self.menu.modifiers = modifiers;
             }
             // `PackSelectionScreen.onFilesDrop`: a pack dropped on the window
             // joins the Create New World screen's data packs.
@@ -1090,16 +1089,13 @@ impl Loading {
             }
             WindowEvent::MouseInput { state, button, .. } if self.menu.options_open => {
                 if state == ElementState::Pressed && self.menu.options.selected_key.is_some() {
-                    let events = self.menu.options.bind_mouse(
-                        &mut self.settings,
-                        horizon_client_input::winit_adapter::from_winit_mouse(button),
-                    );
+                    let events = self.menu.options.bind_mouse(&mut self.settings, button);
                     self.menu_option_events(events);
-                } else if matches!(button, WinitMouseButton::Left | WinitMouseButton::Right) {
+                } else if matches!(button, MouseButton::Left | MouseButton::Right) {
                     if state == ElementState::Pressed {
-                        self.menu.dragging = button == WinitMouseButton::Left;
-                        self.menu_options_click(false, button == WinitMouseButton::Right);
-                    } else if button == WinitMouseButton::Left {
+                        self.menu.dragging = button == MouseButton::Left;
+                        self.menu_options_click(false, button == MouseButton::Right);
+                    } else if button == MouseButton::Left {
                         self.menu.dragging = false;
                         let events = self.menu.options.release();
                         self.menu_option_events(events);
@@ -1108,7 +1104,7 @@ impl Loading {
             }
             WindowEvent::MouseInput {
                 state,
-                button: WinitMouseButton::Left,
+                button: MouseButton::Left,
                 ..
             } => {
                 let batch = HudBatch::new(self.menu_size());
@@ -1141,7 +1137,7 @@ impl Loading {
             // of any button, so the middle one selects it without joining.
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
-                button: WinitMouseButton::Middle,
+                button: MouseButton::Middle,
                 ..
             } => {
                 let batch = HudBatch::new(self.menu_size());

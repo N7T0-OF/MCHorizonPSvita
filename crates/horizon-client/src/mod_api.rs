@@ -48,6 +48,8 @@ pub use crate::recipe_book::RecipeBookCategory;
 pub use crate::text::Text;
 pub use crate::world_primitives::{PrimitiveShape, WorldPrimitive, WorldPrimitives};
 pub use horizon_assets::item_model::{DisplayContext, StackView};
+/// Portable key event delivered by the desktop and native input boundaries.
+pub use horizon_client_platform::{KeyLocation, KeyboardEvent as InputKeyboardEvent, LogicalKey};
 pub use horizon_core::{
     geometry::Direction,
     position::BlockPos,
@@ -73,7 +75,8 @@ pub use horizon_world::{
 pub use serde_json;
 use serde_json::{Map, Value};
 use std::time::Duration;
-/// The window events `input_key` hands over (`winit::event::KeyEvent`) and their key types.
+/// Winit remains re-exported for existing desktop native-mod APIs; shared game hooks use the
+/// platform-neutral event types above.
 pub use winit;
 
 /// Camera values from the most recently extracted world frame.
