@@ -2,11 +2,14 @@
 #![forbid(unsafe_code)]
 
 pub mod confirm_screen;
+pub mod datapack;
 pub mod dialog_screen;
 pub mod game_rules_screen;
 pub mod pad_glyph;
 pub mod preedit;
 pub mod screen_narrator;
+pub mod title_confirm_experiments;
+pub mod title_experiments;
 pub mod toast_slide;
 pub mod ui;
 pub mod widgets;

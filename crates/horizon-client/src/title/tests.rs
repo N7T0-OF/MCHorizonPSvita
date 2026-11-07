@@ -1185,7 +1185,7 @@ fn create_world_tabs_follow_vanilla_and_their_choices_reach_the_action() {
 
 #[test]
 fn ctrl_digits_and_ctrl_tab_switch_the_create_world_tabs() {
-    use winit::keyboard::KeyCode;
+    use horizon_client_platform::input::KeyCode;
     let mut f = Fixture::new();
     f.click("Singleplayer");
     assert!(matches!(f.title.mode, Mode::Create { .. }));
@@ -1330,7 +1330,7 @@ fn each_world_preset_writes_its_own_generator() {
 
 #[test]
 fn world_fields_edit_at_their_cursor() {
-    use winit::keyboard::KeyCode;
+    use horizon_client_platform::input::KeyCode;
     let mut f = Fixture::new();
     f.world("World", "World");
     f.title.enter_singleplayer();
@@ -1402,7 +1402,7 @@ fn tab_walks_the_edit_server_screen_through_its_buttons() {
 
 #[test]
 fn server_fields_edit_at_their_cursor() {
-    use winit::keyboard::KeyCode;
+    use horizon_client_platform::input::KeyCode;
     let mut f = Fixture::new();
     f.title.mode = Mode::Multiplayer(crate::multiplayer::Screen::Edit {
         index: None,

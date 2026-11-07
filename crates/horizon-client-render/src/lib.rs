@@ -115,6 +115,7 @@ pub mod test_instance_block;
 pub mod testgen;
 pub use horizon_client_font::title_edition;
 pub use horizon_client_ui::toast_slide;
+pub use horizon_client_ui::{title_confirm_experiments, title_experiments};
 pub mod trims;
 pub use horizon_client_ui::ui;
 pub mod vault;

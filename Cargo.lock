@@ -1520,6 +1520,7 @@ dependencies = [
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-telemetry",
+ "horizon-terrain-mesh",
  "horizon-theme",
  "horizon-threads",
  "horizon-world",
@@ -1624,6 +1625,7 @@ dependencies = [
  "horizon-client-platform",
  "horizon-core",
  "horizon-narrator",
+ "horizon-resource-zip",
  "serde_json",
 ]
 

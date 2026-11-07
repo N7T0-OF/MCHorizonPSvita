@@ -1570,7 +1570,7 @@ mod tests {
 
     #[test]
     fn search_edits_at_its_cursor() {
-        use winit::keyboard::KeyCode;
+        use horizon_client_platform::input::KeyCode;
         let mut c = creative(0);
         c.select(1);
         c.search.insert_text("hello world");

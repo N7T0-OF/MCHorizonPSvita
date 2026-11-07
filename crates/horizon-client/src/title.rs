@@ -16,9 +16,7 @@ use std::{
 };
 
 mod buffet;
-mod confirm_experiments;
 mod create_world;
-mod experiments;
 mod flat;
 mod onboarding;
 #[cfg(test)]
@@ -27,6 +25,9 @@ pub mod world_management;
 pub use buffet::State as BuffetEditor;
 pub use create_world::{DIFFICULTIES, WorldOptions};
 pub use flat::{FlatLayer, FlatSettings, State as FlatEditor};
+use horizon_client_render::{
+    title_confirm_experiments as confirm_experiments, title_experiments as experiments,
+};
 pub use onboarding::Onboarding;
 
 /// SelectWorldScreen's `HeaderAndFooterLayout(8 + 9 + 8 + 20 + 4, 60)`.
