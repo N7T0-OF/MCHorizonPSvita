@@ -7,6 +7,7 @@ rust-version = "1.90"
 description = "The client's lowest layer: chat text and translations, SNBT and NBT paths, the scoreboard, boss bars, game rules and the registry and particle tables commands name"
 
 [dependencies]
+base64 = "0.22"
 chrono = { version = "0.4.42", default-features = false, features = ["std"] }
 horizon-core = { path = "../horizon-core" }
 horizon-world = { path = "../horizon-world" }
