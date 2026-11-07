@@ -1390,6 +1390,25 @@ mod tests {
     }
 
     #[test]
+    fn artwork_switches_from_boot_to_the_received_title_resources() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut loading = loading(receiver);
+        let (atlas, panorama) = loading.artwork();
+        assert!(std::ptr::eq(atlas, &loading.boot));
+        assert!(panorama.is_none());
+
+        let root = std::env::temp_dir().join("horizon-startup-menu-artwork-test");
+        let mut resources = gui(&root);
+        resources.atlas.revision = 42;
+        let expected_panorama = resources.panorama.clone();
+        loading.set_ui(resources, root);
+
+        let (atlas, panorama) = loading.artwork();
+        assert_eq!(atlas.revision, 42);
+        assert!(Arc::ptr_eq(panorama.unwrap(), &expected_panorama));
+    }
+
+    #[test]
     fn platform_presenter_receives_the_original_title_frame_before_handoff() {
         struct LoopControl(std::cell::Cell<EventLoopControl>);
         impl EventLoopCtl for LoopControl {

@@ -22063,6 +22063,19 @@ struct Loading {
 /// handing off anyway; a host without a window must present the frame.
 const TITLE_FRAME_WAIT: Duration = Duration::from_secs(1);
 impl Loading {
+    /// The boot atlas until the original title resources arrive, then their
+    /// atlas and panorama for whichever platform presents the menu.
+    fn artwork(
+        &self,
+    ) -> (
+        &horizon_client::hud::HudAtlas,
+        Option<&Arc<horizon_client::gfx::panorama::Faces>>,
+    ) {
+        self.gui
+            .as_ref()
+            .map_or((&self.boot, None), |gui| (&gui.atlas, Some(&gui.panorama)))
+    }
+
     /// The world renderer is built on the main thread, so building it before
     /// the title is on the screen holds the title back by that build. Wait for
     /// one title frame first, unless a world is waiting to open.
@@ -22148,15 +22161,23 @@ impl Loading {
         });
         let offscreen = self.options.as_ref().is_some_and(|o| o.offscreen);
         let boot_step = startup::step("renderer.boot");
+        let (atlas, panorama) = self.artwork();
         match loading_renderer(
             window.clone(),
             offscreen,
-            Some(&self.boot),
-            None,
+            Some(atlas),
+            panorama,
             None,
             self.settings.horizon.api,
         ) {
-            Ok(r) => self.renderer = Some(r),
+            Ok(r) => {
+                self.renderer = Some(r);
+                // Resources can arrive before a window. Start the desktop
+                // title-frame wait once that artwork has a renderer.
+                if self.gui.is_some() {
+                    self.ui_at = Some(Instant::now());
+                }
+            }
             Err(e) => {
                 #[cfg(target_os = "windows")]
                 if let Some(stop) = &boot_paint_stop {
@@ -22229,13 +22250,13 @@ impl Loading {
         if let Some(renderer) = &mut self.renderer {
             horizon_client::presentation::release_surface(renderer);
         }
-        let bundle = self.gui.as_ref().expect("the menu bundle was just set");
+        let (atlas, panorama) = self.artwork();
         let _step = startup::step("renderer.title_artwork");
         match loading_renderer(
             window,
             offscreen,
-            Some(&bundle.atlas),
-            Some(&bundle.panorama),
+            Some(atlas),
+            panorama,
             self.renderer.as_ref(),
             self.settings.horizon.api,
         ) {
