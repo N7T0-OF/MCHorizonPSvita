@@ -10,6 +10,7 @@
 #include <gx2/sampler.h>
 #include <gx2/shaders.h>
 #include <gx2/texture.h>
+#include <gx2/utils.h>
 #include <gx2r/buffer.h>
 #include <gx2r/draw.h>
 #include <gx2r/surface.h>
@@ -199,8 +200,7 @@ init_block_atlas(void)
    sBlockAtlas.surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
    sBlockAtlas.viewNumMips = 1;
    sBlockAtlas.viewNumSlices = 1;
-   // GX2 component selectors are three-bit fields in X/Y/Z/W order.
-   sBlockAtlas.compMap = 0U | (1U << 3) | (2U << 6) | (3U << 9);
+   sBlockAtlas.compMap = GX2_COMP_MAP(GX2_SQ_SEL_R, GX2_SQ_SEL_G, GX2_SQ_SEL_B, GX2_SQ_SEL_A);
 
    const GX2RResourceFlags textureFlags = GX2R_RESOURCE_BIND_TEXTURE
                                           | GX2R_RESOURCE_USAGE_CPU_WRITE
@@ -306,7 +306,7 @@ init_lightmap(void)
    sLightmap.surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
    sLightmap.viewNumMips = 1;
    sLightmap.viewNumSlices = 1;
-   sLightmap.compMap = 0U | (1U << 3) | (2U << 6) | (3U << 9);
+   sLightmap.compMap = GX2_COMP_MAP(GX2_SQ_SEL_R, GX2_SQ_SEL_G, GX2_SQ_SEL_B, GX2_SQ_SEL_A);
 
    const GX2RResourceFlags textureFlags = GX2R_RESOURCE_BIND_TEXTURE
                                           | GX2R_RESOURCE_USAGE_CPU_WRITE

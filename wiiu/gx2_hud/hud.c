@@ -8,6 +8,7 @@
 #include <gx2/sampler.h>
 #include <gx2/shaders.h>
 #include <gx2/texture.h>
+#include <gx2/utils.h>
 #include <gx2r/buffer.h>
 #include <gx2r/draw.h>
 #include <gx2r/surface.h>
@@ -118,7 +119,7 @@ HorizonHudResult horizon_gx2_hud_create(HorizonGx2Hud **out, const void *gfd,
    surface->tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
    hud->atlas.viewNumMips = 1;
    hud->atlas.viewNumSlices = 1;
-   hud->atlas.compMap = 0U | (1U << 3) | (2U << 6) | (3U << 9);
+   hud->atlas.compMap = GX2_COMP_MAP(GX2_SQ_SEL_R, GX2_SQ_SEL_G, GX2_SQ_SEL_B, GX2_SQ_SEL_A);
    if (!GX2RCreateSurface(surface, texture_flags)) goto fail;
    uint8_t *pixels = GX2RLockSurfaceEx(surface, 0, texture_flags);
    if (!pixels) goto fail;

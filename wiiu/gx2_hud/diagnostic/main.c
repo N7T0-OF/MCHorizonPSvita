@@ -43,6 +43,10 @@ static void quad(HorizonHudVertex *v, float x0, float y0, float x1, float y1,
 static int readback(char *message, size_t capacity)
 {
    GX2Surface *src = &WHBGfxGetTVColourBuffer()->surface;
+   if (src->width <= 864 || src->height <= 64) {
+      snprintf(message, capacity, "readback target too small");
+      return 0;
+   }
    GX2Surface dst = {0};
    dst.dim = GX2_SURFACE_DIM_TEXTURE_2D;
    dst.width = src->width; dst.height = src->height; dst.depth = 1;
@@ -65,15 +69,26 @@ static int readback(char *message, size_t capacity)
    }
    const uint8_t *red = p + ((size_t)64 * dst.pitch + 64) * 4;
    const uint8_t *green = p + ((size_t)64 * dst.pitch + 224) * 4;
+   const uint8_t *blue = p + ((size_t)64 * dst.pitch + 384) * 4;
+   const uint8_t *transparent = p + ((size_t)64 * dst.pitch + 544) * 4;
+   const uint8_t *texture_red = p + ((size_t)64 * dst.pitch + 704) * 4;
+   const uint8_t *texture_green = p + ((size_t)64 * dst.pitch + 864) * 4;
    const uint8_t *background = p + ((size_t)8 * dst.pitch + 8) * 4;
    const int ok = red[0] > 200 && red[1] < 30 && red[2] < 30 &&
                   green[0] < 30 && green[1] > 200 && green[2] < 30 &&
-                  background[0] > 30 && background[0] < 80;
+                  blue[0] < 30 && blue[1] < 30 && blue[2] > 200 &&
+                  texture_red[0] > 200 && texture_red[1] < 30 && texture_red[2] < 30 &&
+                  texture_green[0] < 30 && texture_green[1] > 200 && texture_green[2] < 30 &&
+                  transparent[0] == background[0] && transparent[1] == background[1] &&
+                  transparent[2] == background[2] && background[0] > 30 && background[0] < 80;
    snprintf(message, capacity,
-            "readback=%s target=%ux%u format=0x%x tiles=%u,%u pitch=%u red=%u,%u,%u,%u green=%u,%u,%u,%u background=%u,%u,%u,%u",
+            "readback=%s target=%ux%u format=0x%x tiles=%u,%u pitch=%u red=%u,%u,%u,%u green=%u,%u,%u,%u background=%u,%u,%u,%u blue=%u,%u,%u,%u transparent=%u,%u,%u,%u texture_red=%u,%u,%u,%u texture_green=%u,%u,%u,%u",
             ok ? "pass" : "mismatch", src->width, src->height, src->format, src->tileMode, dst.tileMode, dst.pitch,
             red[0],red[1],red[2],red[3],green[0],green[1],green[2],green[3],
-            background[0],background[1],background[2],background[3]);
+            background[0],background[1],background[2],background[3],
+            blue[0],blue[1],blue[2],blue[3],transparent[0],transparent[1],transparent[2],transparent[3],
+            texture_red[0],texture_red[1],texture_red[2],texture_red[3],
+            texture_green[0],texture_green[1],texture_green[2],texture_green[3]);
    GX2RUnlockSurfaceEx(&dst, 0, flags);
    GX2RDestroySurfaceEx(&dst, flags);
    return ok;
@@ -88,10 +103,11 @@ int main(void)
    }
    status("entry reached");
    if (!WHBGfxInit()) { status("GX2 initialization failed"); return 1; }
-   const uint8_t atlas[] = {0,0,0,255, 255,255,255,255};
+   const uint8_t atlas[] = {0,0,0,255, 255,255,255,255, 0,0,255,255,
+                            255,0,0,0, 255,0,0,255, 0,255,0,255};
    const uint8_t white[] = {255,255,255,255};
    HorizonGx2Hud *hud = NULL;
-   HorizonHudResult result = horizon_gx2_hud_create(&hud, _binary_hud_diag_gsh_start, 2, 1, atlas, sizeof(atlas), 12);
+   HorizonHudResult result = horizon_gx2_hud_create(&hud, _binary_hud_diag_gsh_start, 6, 1, atlas, sizeof(atlas), 36);
    if (result != HORIZON_HUD_OK) {
       char report[96];
       snprintf(report, sizeof(report), "presenter create failed=%d", result);
@@ -101,13 +117,17 @@ int main(void)
       WHBUnmountSdCard(); WHBProcShutdown();
       return 2;
    }
-   HorizonHudVertex vertices[12];
-   quad(vertices, 32, 32, 160, 160, 0.25f, UINT32_C(0xff0000ff));
-   quad(vertices + 6, 192, 32, 320, 160, 0.75f, UINT32_C(0xff00ff00));
-   HorizonHudRun runs[] = {{0,6,HORIZON_HUD_ALPHA}, {6,12,HORIZON_HUD_ALPHA}};
+   HorizonHudVertex vertices[36];
+   quad(vertices, 32, 32, 160, 160, 0.5f / 6, UINT32_C(0xff0000ff));
+   quad(vertices + 6, 192, 32, 320, 160, 1.5f / 6, UINT32_C(0xff00ff00));
+   quad(vertices + 12, 352, 32, 480, 160, 2.5f / 6, UINT32_C(0xffffffff));
+   quad(vertices + 18, 512, 32, 640, 160, 3.5f / 6, UINT32_C(0xffffffff));
+   quad(vertices + 24, 672, 32, 800, 160, 4.5f / 6, UINT32_C(0xffffffff));
+   quad(vertices + 30, 832, 32, 960, 160, 5.5f / 6, UINT32_C(0xffffffff));
+   HorizonHudRun runs[] = {{0,6,HORIZON_HUD_ALPHA}, {6,36,HORIZON_HUD_ALPHA}};
    HorizonHudPatch patch = {0,0,1,1,white,sizeof(white)};
    GX2Surface *tv = &WHBGfxGetTVColourBuffer()->surface;
-   HorizonHudFrame frame = {vertices,12,runs,2,&patch,1,tv->width,tv->height,1.0f,0};
+   HorizonHudFrame frame = {vertices,36,runs,2,&patch,1,tv->width,tv->height,1.0f,0};
    runs[0].blend = HORIZON_HUD_INVERT;
    if (horizon_gx2_hud_draw(hud, &frame) != HORIZON_HUD_UNSUPPORTED) {
       status("unsupported blend not rejected");

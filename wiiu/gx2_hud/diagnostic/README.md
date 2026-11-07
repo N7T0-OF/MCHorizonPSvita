@@ -2,7 +2,9 @@
 
 This opt-in RPX exercises the actual GX2 HUD presenter with original test pixels:
 an atlas upload and patch, two ordered alpha runs, and rejection of an unsupported
-invert run. It is a diagnostic fixture, not a Horizon menu or gameplay. The target
+invert run. It samples independently coloured red, green and blue texels with white
+vertices and checks that a fully transparent texel leaves the background unchanged.
+It is a diagnostic fixture, not a Horizon menu or gameplay. The target
 is built separately and is not linked into the normal Wii U client RPX.
 
 With devkitPro/WUT, CMake, Ninja and CafeGLSL installed, from the project root in
@@ -18,12 +20,26 @@ The generated `horizon_gx2_hud_diag.rpx` tests pixels with `GX2CopySurface`.
 The copy uses `GX2_TILE_MODE_LINEAR_SPECIAL` because Cemu 2.6 forces a texture
 readback for the observed tiled source and this destination. This is an emulator
 verification technique, not evidence that this readback path works on hardware.
+For this single-frame diagnostic, set `<AsyncCompile>false</AsyncCompile>` in
+the isolated Cemu `portable/settings.xml`; otherwise the first draw may precede
+asynchronous shader compilation. Its fixed readback positions require a TV
+target wider than 864 pixels and taller than 64 pixels.
 Exit status is zero only if the sampled pixels pass. The diagnostic reports its
 status via `OSReport` and, when an SD card is mounted and the directory exists,
 `wiiu/apps/HorizonWiiU/hud-diagnostic-status.log`. Absence of the file is not a
 pass; mount, client, open or write failures can prevent its creation.
 
 ## Recorded Cemu 2.6 run
+
+The expanded RGBA diagnostic built on 2026-11-07 to RPX SHA-256
+`36811cc0fbc7c9f35a6ac7461ecd158215937ceb5ecf3589191e56e4ae929aa8`.
+An isolated patched Cemu 2.6 run with synchronous shader compilation reported
+`readback=pass`: texture red `(255,0,0,255)`, texture green `(0,255,0,255)`,
+texture blue `(0,0,255,255)`, and the transparent sample matched the background
+`(51,51,51,255)`. The original vertex-tinted red and green checks also passed.
+This checks fully transparent discard, not partial-alpha blending or real hardware.
+A separate temporary build with red and green component selectors deliberately
+swapped failed the new texture checks while the original tinted checks passed.
 
 The official portable Cemu release was extracted in the temporary diagnostic
 folder, with its own `portable/sdcard` and settings. The existing user SD and
