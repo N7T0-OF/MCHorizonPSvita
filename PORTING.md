@@ -238,6 +238,16 @@ Build directory: `/tmp/horizonwiiu-lightmap-real` for the real Horizon capture a
 
 ## Next steps
 
+Current handoff: C: had about 9.75 GiB free on 2026-11-07 after build artifacts expanded. Before another build, safely restore disk headroom; do not delete the unexpectedly modified temporary Cemu tree or other user data without determining ownership. An independently reviewed CIT loader/armor extraction is present **uncommitted and not yet compiled or tested** in `crates/horizon-client-render/src/{cit.rs,cit_armor.rs,lib.rs}` and `crates/horizon-terrain-mesh/src/{cit_assets.rs,cit_armor.rs,lib.rs}`. The original `cit_armor.rs` was moved byte-for-byte. After space is restored, from the workspace run:
+
+```sh
+CARGO_TARGET_DIR=/home/ben/HorizonWiiU-toolchain/horizon-target-check cargo +nightly test -p horizon-terrain-mesh --lib cit_armor::tests --no-default-features --jobs 1
+CARGO_TARGET_DIR=/home/ben/HorizonWiiU-toolchain/horizon-target-check cargo +nightly test -p horizon-client-render --lib hud::tests::an_armor_rules_texture_is_packed_too --no-default-features --jobs 1
+RUSTC=/home/ben/HorizonWiiU-toolchain/rust-wiiu-cafe/build/host/stage1/bin/rustc CARGO_TARGET_DIR=/home/ben/HorizonWiiU-toolchain/horizon-target-check cargo +nightly check -p horizon-terrain-mesh --no-default-features --target powerpc-nintendo-cafe --jobs 1
+```
+
+The first command was interrupted during compilation; no result is available. Review and commit only after the checks succeed. The pre-existing `.vscode/` folder is untracked and is not part of this work.
+
 1. Reach Horizon's existing main menu first. Make the ordinary client entry (`run_with` → `run_loading` → `Loading`/`Title`) run on Cafe; keep the current WUT worldgen bootstrap diagnostic separate and do not make a substitute menu. Treat serial/file logging as a debugging aid for this path, not a milestone ahead of the menu.
 2. Separate the concrete `Renderer` construction and GPU resources from shared frame/menu data, including CPU types still housed in WGPU-bearing modules; make WGPU/Winit optional for the Cafe client while preserving Horizon's current module paths. Resolve `getrandom` 0.4's Cafe backend using verified system entropy before the portable resource ZIP can link on Cafe; account for the separate 0.3 dependency too.
 3. Add the Cafe host/presenter path so CafeOS events drive the existing `Loading`/`StartupMenu` input and GX2 draws the existing `HudBatch`, panorama and title frame. Profile/default-skin and some atlas helpers are now shared; the batch still references the complete `HudAtlas`, whose remaining collaborators include sprite animations, CIT/trims and pack text. Move those existing dependencies with their original behavior and re-exports before moving the batch. Feed the VPAD adapter into Horizon's existing `Pads` processing and extract its menu navigation for startup if needed; avoid a second navigation implementation. `Game`/`Loading` still own concrete Winit/WGPU types, so the presentation contracts alone are not selectable on Wii U.
