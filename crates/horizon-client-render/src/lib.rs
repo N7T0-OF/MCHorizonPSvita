@@ -7,7 +7,7 @@ pub use horizon_terrain_mesh::{
 };
 pub mod audio;
 pub mod auth;
-pub mod ban_notice;
+pub use horizon_client_core::ban_notice;
 pub use horizon_client_font::bidi;
 pub mod block_edit;
 pub mod block_entities;

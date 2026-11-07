@@ -5,6 +5,7 @@
 //! horizon-client re-exports each module under its old path
 //! (`horizon_client::text`, ...).
 #![forbid(unsafe_code)]
+pub mod ban_notice;
 pub mod block_entity_nbt;
 pub mod bossbar;
 pub mod component;
