@@ -835,7 +835,7 @@ impl HudAtlas {
             defaults,
             "rendertype_lines",
             &[],
-            &crate::gfx::core_lines::GLUE,
+            &crate::core_lines_glue::GLUE,
         );
         Ok(atlas)
     }
