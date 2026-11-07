@@ -1,12 +1,18 @@
 //! Horizon's shared CPU-side UI widgets and input presentation.
 #![forbid(unsafe_code)]
 
+pub mod confirm_screen;
+pub mod dialog_screen;
+pub mod game_rules_screen;
 pub mod pad_glyph;
 pub mod preedit;
+pub mod screen_narrator;
+pub mod toast_slide;
 pub mod ui;
 pub mod widgets;
 
-pub use horizon_client_core::text;
+pub use horizon_client_core::{component, dialog, gamerules, lang, text};
+pub use horizon_client_font::{bidi, font};
 pub use horizon_client_input::{clipboard, gamepad};
 
 pub mod hud {
