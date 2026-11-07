@@ -217,7 +217,7 @@ fn locate_coordinates_fill_chat_with_teleport_without_submitting() {
                 &m,
                 &commands,
                 &[],
-                winit::keyboard::KeyCode::Enter,
+                horizon_client_platform::KeyCode::Enter,
                 false,
                 false
             ),
@@ -228,7 +228,7 @@ fn locate_coordinates_fill_chat_with_teleport_without_submitting() {
 
 #[test]
 fn history_arrows_recall_messages_and_restore_the_draft() {
-    use winit::keyboard::KeyCode::{ArrowDown, ArrowUp};
+    use horizon_client_platform::KeyCode::{ArrowDown, ArrowUp};
 
     let font = font();
     let m = Measure(&font);
@@ -297,7 +297,14 @@ fn mod_commands_are_coloured_and_complete_like_vanilla_ones() {
         registries: &registries,
     };
     let mut screen = typed(&modded, "/coo");
-    screen.key(&m, &c, &[], winit::keyboard::KeyCode::Tab, false, false);
+    screen.key(
+        &m,
+        &c,
+        &[],
+        horizon_client_platform::KeyCode::Tab,
+        false,
+        false,
+    );
     assert_eq!(screen.value(), "/coords");
 }
 
@@ -337,7 +344,14 @@ fn chat_completes_the_servers_custom_completions_with_the_players() {
         screen.type_text(&m, &c, line);
         // Chat shows no list by itself: Tab shows it, Tab again uses it.
         for _ in 0..2 {
-            screen.key(&m, &c, &[], winit::keyboard::KeyCode::Tab, false, false);
+            screen.key(
+                &m,
+                &c,
+                &[],
+                horizon_client_platform::KeyCode::Tab,
+                false,
+                false,
+            );
         }
         screen.value().to_owned()
     };
@@ -379,7 +393,14 @@ fn ask_server_nodes_wait_for_the_servers_completions() {
         registries: &registries,
     };
     let tab = |screen: &mut ChatScreen| {
-        screen.key(&m, &c, &[], winit::keyboard::KeyCode::Tab, false, false);
+        screen.key(
+            &m,
+            &c,
+            &[],
+            horizon_client_platform::KeyCode::Tab,
+            false,
+            false,
+        );
     };
     let mut screen = ChatScreen::new(&m, &c, "", 0, 640, 360, full());
     screen.type_text(&m, &c, "/bossbar get pt");
@@ -462,7 +483,14 @@ fn the_chat_option_decides_what_may_be_sent() {
         registries: &registries,
     };
     let enter = |screen: &mut ChatScreen| {
-        screen.key(&m, &c, &[], winit::keyboard::KeyCode::Enter, false, false)
+        screen.key(
+            &m,
+            &c,
+            &[],
+            horizon_client_platform::KeyCode::Enter,
+            false,
+            false,
+        )
     };
     for (visibility, chat, command) in [
         (ChatVisibility::Full, true, true),

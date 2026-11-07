@@ -8,10 +8,12 @@
 use crate::{
     Result,
     chunk::ColumnLayout,
-    gfx::{Frame, Renderer, SectionKey},
+    gfx::{Frame, SectionKey},
     graphics::PresentMode,
     mesher::SectionMesh,
 };
+
+mod desktop;
 
 /// Surface operations used by Horizon's frame loop, independent of the GPU API.
 pub trait PresentationBackend {
@@ -26,32 +28,6 @@ pub trait PresentationBackend {
     fn set_present_mode(&mut self, vsync: bool, mode: PresentMode);
 }
 
-impl PresentationBackend for Renderer {
-    fn viewport_size(&self) -> [u32; 2] {
-        [self.config.width, self.config.height]
-    }
-
-    fn present_frame(&mut self, frame: &Frame<'_>) -> Result<bool> {
-        self.render(frame)
-    }
-
-    fn resize(&mut self, width: u32, height: u32) {
-        Renderer::resize(self, width, height);
-    }
-
-    fn release_surface(&mut self) {
-        Renderer::release_surface(self);
-    }
-
-    fn recreate_surface(&mut self) -> Result<()> {
-        Renderer::recreate_surface(self)
-    }
-
-    fn set_present_mode(&mut self, vsync: bool, mode: PresentMode) {
-        Renderer::set_present_mode(self, vsync, mode);
-    }
-}
-
 /// Dynamic chunk-mesh lifecycle. Upload replaces the mesh for a section; a
 /// backend reports allocation/conversion errors so Horizon can retain the CPU
 /// mesh and retry it on a later frame.
@@ -62,20 +38,6 @@ pub trait TerrainBackend {
     fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<()>;
     fn clear_sections(&mut self, layout: ColumnLayout);
     fn remove_columns(&mut self, columns: &mut dyn Iterator<Item = (i32, i32)>);
-}
-
-impl TerrainBackend for Renderer {
-    fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<()> {
-        Renderer::upload(self, key, mesh)
-    }
-
-    fn clear_sections(&mut self, layout: ColumnLayout) {
-        Renderer::clear_sections(self, layout);
-    }
-
-    fn remove_columns(&mut self, columns: &mut dyn Iterator<Item = (i32, i32)>) {
-        Renderer::remove_columns(self, columns);
-    }
 }
 
 /// Submit Horizon's frame through its selected presentation backend.

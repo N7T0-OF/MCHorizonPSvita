@@ -1216,7 +1216,7 @@ impl ControllerUi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::keyboard::KeyCode as K;
+    use horizon_client_platform::KeyCode as K;
 
     const SIZE: (f32, f32) = (854.0, 480.0);
     const FB: [i32; 2] = [1708, 960];

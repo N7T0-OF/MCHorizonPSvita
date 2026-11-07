@@ -2080,7 +2080,7 @@ impl GraphicsUi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::keyboard::KeyCode as K;
+    use horizon_client_platform::KeyCode as K;
 
     const SIZE: (f32, f32) = (640.0, 360.0);
     const FB: [i32; 2] = [1920, 1080];
