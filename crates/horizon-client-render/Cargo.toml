@@ -15,6 +15,7 @@ horizon-bench = { path = "../horizon-bench" }
 horizon-client-core = { path = "../horizon-client-core" }
 horizon-client-font = { path = "../horizon-client-font" }
 horizon-client-hud = { path = "../horizon-client-hud" }
+horizon-client-ui = { path = "../horizon-client-ui" }
 horizon-client-input = { path = "../horizon-client-input" }
 horizon-client-platform = { path = "../horizon-client-platform" }
 horizon-command = { path = "../horizon-command" }

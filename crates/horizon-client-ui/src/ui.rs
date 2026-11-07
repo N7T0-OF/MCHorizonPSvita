@@ -844,12 +844,7 @@ pub fn list_background(
     );
 }
 /// The visible scrollbar thumb, shared by painting and pointer input.
-pub(crate) fn scrollbar_thumb(
-    top: f32,
-    bottom: f32,
-    content: f32,
-    scroll: f32,
-) -> Option<(f32, f32)> {
+pub fn scrollbar_thumb(top: f32, bottom: f32, content: f32, scroll: f32) -> Option<(f32, f32)> {
     let height = bottom - top;
     if content <= height {
         return None;
@@ -1370,7 +1365,7 @@ pub fn multiline_word_position(value: &str, dir: isize, from: usize) -> usize {
 }
 /// `Character.isWhitespace`: Unicode spaces and line breaks but not the no-break spaces, plus
 /// the ASCII separators U+001C to U+001F.
-pub(crate) fn java_whitespace(c: char) -> bool {
+pub fn java_whitespace(c: char) -> bool {
     (c.is_whitespace() && !matches!(c, '\u{85}' | '\u{a0}' | '\u{2007}' | '\u{202f}'))
         || ('\u{1c}'..='\u{1f}').contains(&c)
 }

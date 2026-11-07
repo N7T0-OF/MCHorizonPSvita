@@ -1095,14 +1095,7 @@ pub struct SubtitleFrame {
     pub width: i32,
     pub height: i32,
 }
-/// Milliseconds on a monotonic clock (`Util.getMillis`).
-pub fn now_ms() -> i64 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as i64
-}
+pub use horizon_client_ui::now_ms;
 #[derive(Default)]
 pub struct SubtitleOverlay {
     subtitles: Vec<Subtitle>,

@@ -17,6 +17,7 @@ members = [
     "crates/horizon-client-core",
     "crates/horizon-client-font",
     "crates/horizon-client-hud",
+    "crates/horizon-client-ui",
     "crates/horizon-client-platform",
     "crates/horizon-client-input",
     "crates/horizon-client-render",

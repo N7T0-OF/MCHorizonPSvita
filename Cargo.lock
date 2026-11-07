@@ -1571,6 +1571,7 @@ dependencies = [
  "horizon-client-hud",
  "horizon-client-input",
  "horizon-client-platform",
+ "horizon-client-ui",
  "horizon-command",
  "horizon-core",
  "horizon-cosmetics",
@@ -1608,6 +1609,20 @@ dependencies = [
  "winit",
  "zip",
  "zune-jpeg",
+]
+
+[[package]]
+name = "horizon-client-ui"
+version = "0.1.0"
+dependencies = [
+ "horizon-client-core",
+ "horizon-client-font",
+ "horizon-client-hud",
+ "horizon-client-input",
+ "horizon-client-platform",
+ "horizon-core",
+ "horizon-narrator",
+ "serde_json",
 ]
 
 [[package]]
