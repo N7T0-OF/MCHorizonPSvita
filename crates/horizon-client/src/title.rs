@@ -8,6 +8,7 @@ use crate::{
     save::Level,
     text::{Text, format_translation},
 };
+use horizon_client_render::toast_slide as toasts;
 use horizon_world::datafix::world_upgrader::{self, WorldUpgrader};
 use std::path::{Path, PathBuf};
 use std::{
@@ -446,7 +447,7 @@ pub struct Title {
     /// A Realm's checked address, once the Realms screen's join came back.
     connect_request: Option<String>,
     /// EditWorldScreen's and WorldOpenFlows' `SystemToast` and its slide.
-    toast: Option<(crate::toasts::Slide, WorldToast)>,
+    toast: Option<(toasts::Slide, WorldToast)>,
     icons: RefCell<std::collections::HashMap<PathBuf, (std::time::SystemTime, Option<Vec<u8>>)>>,
     splash: Option<String>,
     /// `SplashManager.getSplash` rolled the player's own name instead of a list entry.
@@ -1280,7 +1281,7 @@ impl Title {
                 Ok(bytes) => WorldToast::Created { folder, bytes },
                 Err(error) => WorldToast::Failed(error),
             };
-            self.toast = Some((crate::toasts::Slide::default(), toast));
+            self.toast = Some((toasts::Slide::default(), toast));
         }
     }
     /// `ToastManager.update` for the system toast: slides it in, keeps it
@@ -1382,7 +1383,7 @@ impl Title {
         }
         if crate::save::SessionLock::acquire(&self.saves.join(&world.folder)).is_err() {
             self.toast = Some((
-                crate::toasts::Slide::default(),
+                toasts::Slide::default(),
                 WorldToast::AccessFailure(world.folder),
             ));
             return Action::None;
@@ -3312,7 +3313,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
                 + 30.0;
             // Toast.xPos: in from the right edge by the visible portion.
             let x = w - width * slide.portion;
-            crate::toasts::background(atlas, batch, x, 0.0, width);
+            toasts::background(atlas, batch, x, 0.0, width);
             batch.text(atlas, &title, x + 18.0, 7.0, rgba(255, 255, 0, 255), false);
             batch.text(atlas, &message, x + 18.0, 19.0, u32::MAX, false);
         }
