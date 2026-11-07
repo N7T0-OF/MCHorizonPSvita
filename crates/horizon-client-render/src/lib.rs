@@ -25,7 +25,7 @@ pub mod chat;
 pub mod chunk;
 pub mod chunk_map;
 pub mod cit;
-pub mod cit_armor;
+pub use horizon_terrain_mesh::cit_armor;
 pub mod cit_glint;
 pub mod clouds;
 pub mod collisions;

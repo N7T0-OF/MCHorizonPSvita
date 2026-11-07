@@ -9,46 +9,17 @@ use horizon_client_core::component::name_text;
 use horizon_client_core::scoreboard::comp_text;
 use horizon_items::item_data::{canon_tag, encode_components};
 use horizon_items::items::ItemStack;
+#[cfg(test)]
+use horizon_optifine::Properties;
 use horizon_optifine::cit::{ComponentTest, Source, ValueTest};
-use horizon_optifine::{Properties, properties_files_in};
 use horizon_world::nbt::{JavaString, Tag, parse_snbt};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-/// Every rule under the root's `optifine/cit/`, `mcpatcher/cit/` and CIT Resewn's
-/// `citresewn/cit/` folders, the one chosen first when several match first (`Rule::priority`).
-/// The pack's global `cit.properties` is not a rule.
-pub fn load_rules(root: &Path) -> Vec<Rule> {
-    let tops = ["optifine", "mcpatcher", "citresewn"];
-    let mut rules: Vec<Rule> = properties_files_in(root, &tops, "cit")
-        .into_iter()
-        .filter(|path| !path.ends_with("/cit.properties"))
-        .filter_map(|path| {
-            let props = read_properties(&root.join(&path))?;
-            let rule = Rule::parse(&path, &props, |p| root.join(p).is_file());
-            if rule.is_none() {
-                log::warn!("custom item textures: {path} is not a rule Horizon can read");
-            }
-            rule
-        })
-        .collect();
-    rules.sort_by(Rule::priority);
-    rules
-}
-
-/// A `.properties` file as CIT Resewn reads them (`Properties::parse_equals_first`): UTF-8,
-/// else Latin-1 as Java reads them, so a pack saved that way still loads. `None` when it can't
-/// be read.
-pub fn read_properties(path: &Path) -> Option<Properties> {
-    let bytes = fs::read(path).ok()?;
-    let text = String::from_utf8(bytes)
-        .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| char::from(b)).collect());
-    Some(Properties::parse_equals_first(&text))
-}
+pub use horizon_terrain_mesh::cit_assets::{load_rules, read_properties};
 
 /// The rules with an index by item and a cache of what each stack matched.
 #[derive(Debug, Default)]

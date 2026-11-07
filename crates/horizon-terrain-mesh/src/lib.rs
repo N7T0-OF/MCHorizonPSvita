@@ -2,6 +2,7 @@
 pub mod assets;
 pub mod atlas_sources;
 pub mod biome;
+pub mod cit_armor;
 pub mod cit_assets;
 pub mod connected;
 pub mod fusion;

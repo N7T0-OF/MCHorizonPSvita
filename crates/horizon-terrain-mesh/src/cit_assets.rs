@@ -7,9 +7,41 @@
 
 use horizon_assets::model::{CuboidModel, TextureSlot};
 use horizon_optifine::cit::{Kind, Rule};
+use horizon_optifine::{Properties, properties_files_in};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
+
+/// Every rule under the root's `optifine/cit/`, `mcpatcher/cit/` and CIT Resewn's
+/// `citresewn/cit/` folders, the one chosen first when several match first (`Rule::priority`).
+/// The pack's global `cit.properties` is not a rule.
+pub fn load_rules(root: &Path) -> Vec<Rule> {
+    let tops = ["optifine", "mcpatcher", "citresewn"];
+    let mut rules: Vec<Rule> = properties_files_in(root, &tops, "cit")
+        .into_iter()
+        .filter(|path| !path.ends_with("/cit.properties"))
+        .filter_map(|path| {
+            let props = read_properties(&root.join(&path))?;
+            let rule = Rule::parse(&path, &props, |p| root.join(p).is_file());
+            if rule.is_none() {
+                log::warn!("custom item textures: {path} is not a rule Horizon can read");
+            }
+            rule
+        })
+        .collect();
+    rules.sort_by(Rule::priority);
+    rules
+}
+
+/// A `.properties` file as CIT Resewn reads them (`Properties::parse_equals_first`): UTF-8,
+/// else Latin-1 as Java reads them, so a pack saved that way still loads. `None` when it can't
+/// be read.
+pub fn read_properties(path: &Path) -> Option<Properties> {
+    let bytes = fs::read(path).ok()?;
+    let text = String::from_utf8(bytes)
+        .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| char::from(b)).collect());
+    Some(Properties::parse_equals_first(&text))
+}
 
 /// The namespace of CIT files outside `textures/` and `models/`.
 pub const NAMESPACE: &str = "horizon_cit";
