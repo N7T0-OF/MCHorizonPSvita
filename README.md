@@ -1,3 +1,5 @@
+> **MCHorizonWiiU** is an experimental Nintendo Wii U port of Horizon. The Wii U client is not yet playable; [PORTING.md](PORTING.md) records the current implementation and verified tests. The upstream Horizon information below describes the desktop project.
+
 <p align="center">
   <img src="docs/media/banner.webp" alt="The Horizon website: the game you know, rebuilt in Rust" width="100%">
 </p>
