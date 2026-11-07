@@ -43,10 +43,7 @@ impl PresentationBackend for Renderer {
 
 impl HudBackend for Renderer {
     fn set_hud_sprite_animations(&mut self, animations: &[(Rect, SpriteAnimation)]) {
-        self.hud.sprite_animations = animations
-            .iter()
-            .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
-            .collect();
+        self.hud.sprite_animations = horizon_client_hud::sprite_animations::track(animations);
     }
 
     fn set_hud_text_shader(&mut self, shader: Option<&horizon_shaders::CoreProgram>) {

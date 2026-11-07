@@ -9,5 +9,6 @@ use horizon_hud_data::minimap;
 use horizon_shaders::{core_lines_glue, pack_text};
 use horizon_terrain_mesh::{atlas_sources, cit_armor, cit_assets, cit_assets as cit, par, sprites};
 
+pub mod sprite_animations;
 mod hud;
 pub use hud::*;
