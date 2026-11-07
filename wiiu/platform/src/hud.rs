@@ -7,6 +7,9 @@
 use horizon_hud_data::{Blend, HudVertex, Patch};
 use std::ops::Range;
 
+#[cfg(feature = "horizon-hud")]
+pub mod horizon;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Invalid,
@@ -93,6 +96,7 @@ const _: () = {
 #[cfg(any(test, all(feature = "cafe", target_arch = "powerpc")))]
 struct Prepared<'a> {
     frame: &'a Frame<'a>,
+    _extra_patches: &'a [Patch],
     runs: Vec<RawRun>,
     patches: Vec<RawPatch>,
 }
@@ -100,9 +104,17 @@ struct Prepared<'a> {
 #[cfg(any(test, all(feature = "cafe", target_arch = "powerpc")))]
 impl<'a> Prepared<'a> {
     fn new(frame: &'a Frame<'a>) -> Result<Self, Error> {
+        Self::with_extra_patches(frame, &[])
+    }
+
+    fn with_extra_patches(frame: &'a Frame<'a>, extra: &'a [Patch]) -> Result<Self, Error> {
         u32::try_from(frame.vertices.len()).map_err(|_| Error::Invalid)?;
         u32::try_from(frame.runs.len()).map_err(|_| Error::Invalid)?;
-        u32::try_from(frame.patches.len()).map_err(|_| Error::Invalid)?;
+        let patch_count = extra
+            .len()
+            .checked_add(frame.patches.len())
+            .ok_or(Error::Invalid)?;
+        u32::try_from(patch_count).map_err(|_| Error::Invalid)?;
         if frame.pack_text_shader {
             return Err(Error::Unsupported);
         }
@@ -119,9 +131,11 @@ impl<'a> Prepared<'a> {
                 blend: 0,
             });
         }
-        let patches = frame
-            .patches
+        // Desktop updates animated sprites before uploading the frame's
+        // glyph patches. Preserve that order without cloning pixel buffers.
+        let patches = extra
             .iter()
+            .chain(frame.patches)
             .map(|p| RawPatch {
                 x: p.x,
                 y: p.y,
@@ -133,6 +147,7 @@ impl<'a> Prepared<'a> {
             .collect();
         Ok(Self {
             frame,
+            _extra_patches: extra,
             runs,
             patches,
         })
@@ -225,6 +240,16 @@ mod cafe {
         /// This changes GX2 render state.
         pub unsafe fn draw(&mut self, frame: &Frame<'_>) -> Result<(), Error> {
             let prepared = Prepared::new(frame)?;
+            result(horizon_gx2_hud_draw(self.hud.as_ptr(), &prepared.raw()))
+        }
+
+        #[cfg(feature = "horizon-hud")]
+        pub(super) unsafe fn draw_with_patches(
+            &mut self,
+            frame: &Frame<'_>,
+            extra: &[Patch],
+        ) -> Result<(), Error> {
+            let prepared = Prepared::with_extra_patches(frame, extra)?;
             result(horizon_gx2_hud_draw(self.hud.as_ptr(), &prepared.raw()))
         }
     }
