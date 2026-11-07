@@ -22,7 +22,6 @@ use horizon_world::{
     nbt::Tag,
     registry::{BlockRegistry, BlockStateId},
 };
-use winit::event::{ElementState, KeyEvent};
 
 type Pos = (i32, i32, i32);
 
@@ -791,8 +790,8 @@ impl Game<'_> {
     }
     /// `AbstractCommandBlockEditScreen.keyPressed`: the suggestions first,
     /// then Enter is Done, Escape cancels, the rest edits the command.
-    pub(super) fn command_block_key(&mut self, event: &KeyEvent) {
-        if event.state != ElementState::Pressed {
+    pub(super) fn command_block_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return;
         }
         let Some(key) = self.window_event_key else {

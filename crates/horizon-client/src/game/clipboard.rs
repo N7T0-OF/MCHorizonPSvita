@@ -2,22 +2,24 @@
 //! shortcuts of `EditBox`, `MultiLineEditBox` and `TextFieldHelper`.
 use super::*;
 use horizon_client::clipboard::{self, EditShortcut};
-use winit::event::KeyEvent;
 
 impl Game<'_> {
     /// `InputWithModifiers.isSelectAll`/`isCopy`/`isPaste`/`isCut` of a key
     /// press (or repeat): the keyboard's modifier state, or a modifier key an
     /// agent holds.
-    pub(super) fn edit_shortcut(&self, event: &KeyEvent) -> Option<EditShortcut> {
-        if event.state != ElementState::Pressed {
+    pub(super) fn edit_shortcut(
+        &self,
+        event: &horizon_client_platform::KeyboardEvent,
+    ) -> Option<EditShortcut> {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return None;
         }
         let m = self.modifiers;
         let held = |keys: [KeyCode; 2]| keys.iter().any(|k| self.keys.raw(k));
         clipboard::edit_shortcut(
-            horizon_client_input::winit_adapter::shortcut_letter_from_winit(
-                &event.logical_key,
-                event.physical_key,
+            clipboard::shortcut_letter(
+                event.physical_key.unwrap_or(KeyCode::Other),
+                event.logical_text.as_deref(),
             ),
             self.has_control_down_with_quirk(),
             m.shift_key() || held([KeyCode::ShiftLeft, KeyCode::ShiftRight]),

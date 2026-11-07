@@ -9,7 +9,7 @@ use horizon_client::{
     widgets::{Kind, Target},
 };
 use horizon_client_platform::{KeyCode, Modifiers};
-use winit::event::{KeyEvent, MouseButton as WinitMouseButton};
+use winit::event::MouseButton as WinitMouseButton;
 
 #[derive(Default)]
 pub(super) struct StartupMenu {
@@ -228,16 +228,19 @@ impl StartupMenu {
         self.perf.world_opening();
     }
 
-    fn shortcut(&mut self, event: &KeyEvent) -> Option<clipboard::EditShortcut> {
+    fn shortcut(
+        &mut self,
+        event: &horizon_client_platform::KeyboardEvent,
+    ) -> Option<clipboard::EditShortcut> {
         let edit = if cfg!(target_os = "macos") {
             self.modifiers.super_key()
         } else {
             self.modifiers.control_key()
         };
         clipboard::edit_shortcut(
-            horizon_client_input::winit_adapter::shortcut_letter_from_winit(
-                &event.logical_key,
-                event.physical_key,
+            clipboard::shortcut_letter(
+                event.physical_key.unwrap_or(KeyCode::Other),
+                event.logical_text.as_deref(),
             ),
             edit,
             self.modifiers.shift_key(),
@@ -248,7 +251,7 @@ impl StartupMenu {
     /// `Screen.keyPressed` on the title screens: the action a key starts (Enter confirms, see `confirm_key` in title.rs).
     fn title_key(
         &mut self,
-        event: &KeyEvent,
+        event: &horizon_client_platform::KeyboardEvent,
         key: Option<KeyCode>,
         viewport: (f32, f32),
     ) -> Action {
@@ -668,10 +671,10 @@ impl Loading {
     }
 
     /// `Game::narrator_hotkey` on the startup menu's screens.
-    fn menu_narrator_hotkey(&mut self, event: &KeyEvent) {
-        let letter = horizon_client_input::winit_adapter::shortcut_letter_from_winit(
-            &event.logical_key,
-            event.physical_key,
+    fn menu_narrator_hotkey(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        let letter = clipboard::shortcut_letter(
+            event.physical_key.unwrap_or(KeyCode::Other),
+            event.logical_text.as_deref(),
         );
         if letter != Some('b') {
             return;
@@ -692,7 +695,7 @@ impl Loading {
                 .is_some_and(|t| t.has_caret_field() || t.focused_field().is_some())
         };
         let hotkey = super::narrator::is_hotkey(
-            event.state == ElementState::Pressed,
+            event.state == horizon_client_platform::KeyState::Pressed,
             control_with_quirk,
             letter,
             edit_box_focused,
@@ -959,7 +962,7 @@ impl Loading {
                 state,
                 button: WinitMouseButton::Left,
             };
-            if let Err(e) = self.menu_event(event_loop, click, None) {
+            if let Err(e) = self.menu_event(event_loop, click, None, None) {
                 log::warn!("Horizon: keyboard focus click: {e}");
             }
         }
@@ -971,18 +974,17 @@ impl Loading {
         event_loop: &dyn EventLoopCtl,
         event: WindowEvent,
         key: Option<KeyCode>,
+        keyboard: Option<horizon_client_platform::KeyboardEvent>,
     ) -> Result<()> {
-        if let WindowEvent::KeyboardInput { event, .. } = &event
-            && let Some(key) = key
-        {
-            if event.state == ElementState::Pressed {
+        if let (Some(event), Some(key)) = (keyboard.as_ref(), key) {
+            if event.state == horizon_client_platform::KeyState::Pressed {
                 self.menu.physical_keys.insert(key);
             } else {
                 self.menu.physical_keys.remove(&key);
             }
         }
-        if let WindowEvent::KeyboardInput { event, .. } = &event {
-            self.menu_narrator_hotkey(event);
+        if let Some(keyboard) = keyboard.as_ref() {
+            self.menu_narrator_hotkey(keyboard);
         }
         // The real mouse takes the pointer back from the keyboard's focus.
         let synthetic = self.menu.key_synthetic;
@@ -1182,7 +1184,10 @@ impl Loading {
                     self.apply_menu_settings();
                     self.save_menu_settings();
                 } else if self.menu.options_open {
-                    let shortcut = self.menu.shortcut(&event);
+                    let Some(keyboard) = keyboard.as_ref() else {
+                        return Ok(());
+                    };
+                    let shortcut = self.menu.shortcut(keyboard);
                     let atlas = &self.gui.as_ref().unwrap().atlas;
                     let handled = shortcut.is_some_and(|s| {
                         self.menu
@@ -1199,10 +1204,13 @@ impl Loading {
                         self.menu_option_events(events);
                     }
                 } else {
+                    let Some(keyboard) = keyboard.as_ref() else {
+                        return Ok(());
+                    };
                     let batch = HudBatch::new(self.menu_size());
                     let action = self
                         .menu
-                        .title_key(&event, key, (batch.width, batch.height));
+                        .title_key(keyboard, key, (batch.width, batch.height));
                     self.menu_action(event_loop, action);
                 }
             }

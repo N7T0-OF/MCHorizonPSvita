@@ -1,9 +1,9 @@
 //! Desktop input ingress/egress. The game-facing key identities live in
 //! `horizon-client-platform`; Winit is translated here at the window boundary.
 
-use horizon_client_platform::{KeyCode, Modifiers, MouseButton};
+use horizon_client_platform::{KeyCode, KeyState, KeyboardEvent, Modifiers, MouseButton};
 use winit::{
-    event::MouseButton as WinitMouseButton,
+    event::{ElementState, KeyEvent as WinitKeyEvent, MouseButton as WinitMouseButton},
     keyboard::{Key as WinitKey, KeyCode as WinitKeyCode, PhysicalKey},
 };
 
@@ -173,6 +173,54 @@ key_codes!(
     Undo,
 );
 
+/// Convert a desktop key event at the window boundary into Horizon's shared
+/// keyboard payload.
+pub fn from_winit_key_event(event: &WinitKeyEvent) -> KeyboardEvent {
+    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+    let unmodified_key = event.key_without_modifiers();
+    from_winit_key_values(
+        event.physical_key,
+        event.state,
+        &event.logical_key,
+        event.text.as_deref(),
+        &unmodified_key,
+        event.repeat,
+    )
+}
+
+fn from_winit_key_values(
+    physical_key: PhysicalKey,
+    state: ElementState,
+    logical_key: &WinitKey,
+    text: Option<&str>,
+    unmodified_key: &WinitKey,
+    repeat: bool,
+) -> KeyboardEvent {
+    let logical_text = match logical_key {
+        WinitKey::Character(text) => Some(text.to_string()),
+        _ => None,
+    };
+    let unmodified_text = match unmodified_key {
+        WinitKey::Character(text) => Some(text.to_string()),
+        WinitKey::Dead(Some(character)) => Some(character.to_string()),
+        _ => None,
+    };
+    KeyboardEvent {
+        physical_key: match physical_key {
+            PhysicalKey::Code(code) => Some(from_winit_key(code).unwrap_or(KeyCode::Other)),
+            PhysicalKey::Unidentified(_) => None,
+        },
+        state: match state {
+            ElementState::Pressed => KeyState::Pressed,
+            ElementState::Released => KeyState::Released,
+        },
+        logical_text,
+        text: text.map(str::to_owned),
+        unmodified_text,
+        repeat,
+    }
+}
+
 /// Translate a Winit key event's logical text and physical position to the
 /// platform-neutral edit-shortcut letter used by Horizon.
 pub fn shortcut_letter_from_winit(logical: &WinitKey, physical: PhysicalKey) -> Option<char> {
@@ -257,6 +305,43 @@ mod tests {
             ),
             Some('v')
         );
+    }
+
+    #[test]
+    fn keyboard_event_conversion_keeps_text_sources_and_key_state_distinct() {
+        let input = from_winit_key_values(
+            PhysicalKey::Code(WinitKeyCode::KeyA),
+            ElementState::Pressed,
+            &WinitKey::Character("á".into()),
+            Some("áé"),
+            &WinitKey::Character("a".into()),
+            true,
+        );
+        assert_eq!(
+            input,
+            KeyboardEvent {
+                physical_key: Some(KeyCode::KeyA),
+                state: KeyState::Pressed,
+                logical_text: Some("á".to_owned()),
+                text: Some("áé".to_owned()),
+                unmodified_text: Some("a".to_owned()),
+                repeat: true,
+            }
+        );
+
+        let release = from_winit_key_values(
+            PhysicalKey::Unidentified(winit::keyboard::NativeKeyCode::Unidentified),
+            ElementState::Released,
+            &WinitKey::Named(winit::keyboard::NamedKey::Enter),
+            None,
+            &WinitKey::Dead(None),
+            false,
+        );
+        assert_eq!(release.physical_key, None);
+        assert_eq!(release.state, KeyState::Released);
+        assert_eq!(release.text, None);
+        assert_eq!(release.unmodified_text, None);
+        assert!(!release.repeat);
     }
 
     #[test]

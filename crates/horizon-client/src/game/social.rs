@@ -12,7 +12,6 @@ use horizon_client::{
 };
 use horizon_client_platform::KeyCode;
 use std::collections::{HashMap, HashSet};
-use winit::event::{ElementState, KeyEvent};
 
 /// `PlayerSocialManager.hiddenPlayers` and the screen's state.
 pub(super) struct Social {
@@ -208,8 +207,8 @@ impl Game<'_> {
         let _ = self.social_view();
     }
     /// The search box has the focus from the start (`setInitialFocus`): typing fills it.
-    pub(super) fn social_key(&mut self, event: &KeyEvent) {
-        if event.state != ElementState::Pressed {
+    pub(super) fn social_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return;
         }
         let Some(key) = self.window_event_key else {

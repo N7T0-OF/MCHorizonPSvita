@@ -19,7 +19,6 @@ use horizon_client_platform::KeyCode;
 use horizon_core::position::BlockPos;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
 use horizon_world::level::flags as level_flags;
-use winit::event::{ElementState, KeyEvent};
 
 const BLACK: u32 = 0xFF00_0000;
 const PAGE_CHARS: usize = 1024;
@@ -387,8 +386,8 @@ impl Game<'_> {
             g.menu_sent[menu_slot] = None;
         }
     }
-    pub(super) fn book_key(&mut self, event: &KeyEvent) {
-        if event.state != ElementState::Pressed {
+    pub(super) fn book_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return;
         }
         if let Some(shortcut) = self.edit_shortcut(event) {

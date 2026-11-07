@@ -441,7 +441,7 @@ impl Game<'_> {
             && self.panel.search.as_ref().is_some_and(|s| s.focused)
     }
     /// A key press while the search box has focus.
-    pub(super) fn mod_browser_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn mod_browser_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
         let shortcut = self.edit_shortcut(event);
         let ctrl = self.has_control_down();
         let shift = self.has_shift_down();

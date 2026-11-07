@@ -17973,13 +17973,13 @@ impl Game<'_> {
         }
         self.window_event_key = None;
         follow_keymap(&mut event);
-        if let WindowEvent::KeyboardInput { event, .. } = &event
-            && let PhysicalKey::Code(key) = event.physical_key
-        {
-            self.window_event_key = Some(
-                horizon_client_input::winit_adapter::from_winit_key(key).unwrap_or(KeyCode::Other),
-            );
-        }
+        let keyboard = match &event {
+            WindowEvent::KeyboardInput { event, .. } => Some(
+                horizon_client_input::winit_adapter::from_winit_key_event(event),
+            ),
+            _ => None,
+        };
+        self.window_event_key = keyboard.as_ref().and_then(|event| event.physical_key);
         // MacosUtil.setCtrlClickEmulatesRightClick: Control + left click is a right click.
         if let WindowEvent::MouseInput { state, button, .. } = &mut event
             && *button == WinitMouseButton::Left
@@ -17994,18 +17994,10 @@ impl Game<'_> {
         // Who caused it, before the event is handled: the trace wants the
         // window's own keys, never the ones the socket made up.
         self.trace_window_event(origin, &event);
-        if let WindowEvent::KeyboardInput { event, .. } = &event
-            && let Some(key) = self.window_event_key
-        {
-            if event.state == ElementState::Pressed {
+        if let (Some(event), Some(key)) = (keyboard.as_ref(), self.window_event_key) {
+            if event.state == horizon_client_platform::KeyState::Pressed {
                 self.physical_keys.insert(key);
-                use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-                let unmodified_text = match event.key_without_modifiers() {
-                    winit::keyboard::Key::Character(text) => Some(text.to_string()),
-                    winit::keyboard::Key::Dead(Some(character)) => Some(character.to_string()),
-                    _ => None,
-                };
-                horizon_client::keybinds::learn_layout(key, unmodified_text.as_deref());
+                horizon_client::keybinds::learn_layout(key, event.unmodified_text.as_deref());
             } else {
                 self.physical_keys.remove(&key);
             }
@@ -18041,7 +18033,7 @@ impl Game<'_> {
                 return;
             }
         }
-        self.handle_window_event_inner(event_loop, event);
+        self.handle_window_event_inner(event_loop, event, keyboard);
         if let Some((button, pressed, modifiers)) = mouse {
             self.native_mouse_button_post(button, pressed, modifiers);
         }
@@ -18053,7 +18045,12 @@ impl Game<'_> {
     /// shortcut, a special case) never reaches a controller. If a player could want it on one, give
     /// it a handler both can call and a `gamepad::Route` (screenshot and fullscreen do this). A
     /// screen's own raw keys, text and mods' key hooks stay raw on purpose.
-    fn handle_window_event_inner(&mut self, event_loop: &dyn EventLoopCtl, mut event: WindowEvent) {
+    fn handle_window_event_inner(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
+        mut event: WindowEvent,
+        mut keyboard: Option<horizon_client_platform::KeyboardEvent>,
+    ) {
         if let WindowEvent::Focused(false) = &event {
             self.physical_keys.clear();
             self.physical_buttons.clear();
@@ -18144,8 +18141,8 @@ impl Game<'_> {
         }
         // KeyboardHandler.keyPress: the narrator hotkey, on every screen and
         // in game, before the screen takes the key.
-        if let WindowEvent::KeyboardInput { event, .. } = &event {
-            self.narrator_hotkey(event);
+        if let Some(keyboard) = keyboard.as_ref() {
+            self.narrator_hotkey(keyboard);
         }
         if matches!(
             event,
@@ -18333,6 +18330,11 @@ impl Game<'_> {
                 }
                 return;
             }
+        }
+        if let (Some(keyboard), WindowEvent::KeyboardInput { event, .. }) =
+            (keyboard.as_mut(), &event)
+        {
+            keyboard.text = event.text.as_ref().map(ToString::to_string);
         }
         // Screen.keyPressed: Tab, the arrows and Enter move and press the
         // menu's focus, unless the focused widget or the screen keeps them.
@@ -18992,7 +18994,11 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.dialog_open() => {
-                    let shortcut = self.edit_shortcut(&event);
+                    let shortcut = self.edit_shortcut(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    );
                     if event.state == ElementState::Pressed
                         && let Some(key) = self.window_event_key
                     {
@@ -19005,18 +19011,27 @@ impl Game<'_> {
                     if let Some(key) = self.window_event_key {
                         if event.state == ElementState::Pressed {
                             self.keys.insert(key);
-                            self.chat_key(&event);
+                            self.chat_key(
+                                keyboard
+                                    .as_ref()
+                                    .expect("keyboard input has portable payload"),
+                            );
                         } else {
                             self.keys.remove(&key);
                         }
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.sign_edit.is_some() => {
-                    self.sign_edit_key(&event)
-                }
-                WindowEvent::KeyboardInput { event, .. } if self.book.is_some() => {
-                    self.book_key(&event)
-                }
+                WindowEvent::KeyboardInput { .. } if self.sign_edit.is_some() => self
+                    .sign_edit_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ),
+                WindowEvent::KeyboardInput { .. } if self.book.is_some() => self.book_key(
+                    keyboard
+                        .as_ref()
+                        .expect("keyboard input has portable payload"),
+                ),
                 WindowEvent::KeyboardInput { event, .. }
                     if self.screen == Screen::Creative
                         && self.creative_screen.tab().search
@@ -19029,7 +19044,11 @@ impl Game<'_> {
                         // The hovered slot took the key, and its characters
                         // go nowhere (`ignoreTextInput`).
                         typed = None;
-                    } else if let Some(shortcut) = self.edit_shortcut(&event) {
+                    } else if let Some(shortcut) = self.edit_shortcut(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ) {
                         self.creative_search_shortcut(shortcut);
                     } else if let Some(key) = self.window_event_key {
                         // EditBox.keyPressed: arrows, Home, End, Delete and Backspace.
@@ -19052,7 +19071,11 @@ impl Game<'_> {
                         && self.window_event_key != Some(KeyCode::Escape) =>
                 {
                     // The recipe book's search box takes every key but Escape.
-                    self.recipe_key(&event);
+                    self.recipe_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    );
                 }
                 WindowEvent::KeyboardInput { event, .. }
                     if self.mod_browser_typing()
@@ -19060,7 +19083,11 @@ impl Game<'_> {
                         && self.window_event_key != Some(KeyCode::Escape) =>
                 {
                     // A mod's item panel's search box, as the recipe book's.
-                    self.mod_browser_key(&event);
+                    self.mod_browser_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    );
                 }
                 WindowEvent::KeyboardInput { event, .. }
                     if self.station_typing()
@@ -19068,7 +19095,11 @@ impl Game<'_> {
                         && self.window_event_key != Some(KeyCode::Escape) =>
                 {
                     // The anvil rename box takes every key but Escape (AnvilScreen.keyPressed).
-                    if let Some(shortcut) = self.edit_shortcut(&event) {
+                    if let Some(shortcut) = self.edit_shortcut(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ) {
                         self.station_shortcut(shortcut);
                     } else if let Some(key) = self.window_event_key
                         && self.station_key(key)
@@ -19078,34 +19109,55 @@ impl Game<'_> {
                         self.station_text(event.text.as_deref(), backspace);
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                WindowEvent::KeyboardInput { .. }
                     if self.screen == Screen::WorldOptions
                         && self.window_event_key != Some(KeyCode::Escape) =>
                 {
-                    self.world_options_key(&event)
+                    self.world_options_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    )
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::Win => {
-                    self.win_key(&event)?
-                }
-                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::Social => {
-                    self.social_key(&event)
-                }
-                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::CommandBlock => {
-                    self.command_block_key(&event)
-                }
-                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::DebugOptions => {
-                    self.debug_options_key(&event)
-                }
-                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::BlockEditor => {
-                    self.block_editor_key(&event)
-                }
+                WindowEvent::KeyboardInput { .. } if self.screen == Screen::Win => self.win_key(
+                    keyboard
+                        .as_ref()
+                        .expect("keyboard input has portable payload"),
+                )?,
+                WindowEvent::KeyboardInput { .. } if self.screen == Screen::Social => self
+                    .social_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ),
+                WindowEvent::KeyboardInput { .. } if self.screen == Screen::CommandBlock => self
+                    .command_block_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ),
+                WindowEvent::KeyboardInput { .. } if self.screen == Screen::DebugOptions => self
+                    .debug_options_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ),
+                WindowEvent::KeyboardInput { .. } if self.screen == Screen::BlockEditor => self
+                    .block_editor_key(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ),
                 // Options consumes presses; releases still reach the bound
                 // gameplay mapping below, including sneak/sprint toggles.
                 WindowEvent::KeyboardInput { event, .. }
                     if self.screen == Screen::Options && event.state == ElementState::Pressed =>
                 {
-                    if let Some(shortcut) = self.edit_shortcut(&event)
-                        && self.options_shortcut(shortcut)
+                    if let Some(shortcut) = self.edit_shortcut(
+                        keyboard
+                            .as_ref()
+                            .expect("keyboard input has portable payload"),
+                    ) && self.options_shortcut(shortcut)
                     {
                         return Ok(());
                     }
@@ -19138,7 +19190,11 @@ impl Game<'_> {
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.title.is_some() => {
                     if event.state == ElementState::Pressed {
-                        if let Some(shortcut) = self.edit_shortcut(&event) {
+                        if let Some(shortcut) = self.edit_shortcut(
+                            keyboard
+                                .as_ref()
+                                .expect("keyboard input has portable payload"),
+                        ) {
                             self.title_shortcut(shortcut);
                             return Ok(());
                         }
@@ -22114,17 +22170,15 @@ impl Loading {
             return;
         }
         follow_keymap(&mut event);
-        let key = match &event {
-            WindowEvent::KeyboardInput { event, .. } => match event.physical_key {
-                PhysicalKey::Code(code) => Some(
-                    horizon_client_input::winit_adapter::from_winit_key(code)
-                        .unwrap_or(KeyCode::Other),
-                ),
-                PhysicalKey::Unidentified(_) => None,
-            },
+        let keyboard = match &event {
+            WindowEvent::KeyboardInput { event, .. } => Some(
+                horizon_client_input::winit_adapter::from_winit_key_event(event),
+            ),
             _ => None,
         };
-        if let Err(error) = self.menu_event(&WinitEventLoop::new(event_loop), event, key) {
+        let key = keyboard.as_ref().and_then(|event| event.physical_key);
+        if let Err(error) = self.menu_event(&WinitEventLoop::new(event_loop), event, key, keyboard)
+        {
             self.error = Some(error);
             event_loop.exit();
         }

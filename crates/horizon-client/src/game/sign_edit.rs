@@ -15,7 +15,6 @@ use horizon_client::{
 };
 use horizon_client_platform::KeyCode;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
-use winit::event::{ElementState, KeyEvent};
 
 pub(super) struct SignEditor {
     pub pos: (i32, i32, i32),
@@ -511,8 +510,8 @@ impl Game<'_> {
             );
         }
     }
-    pub(super) fn sign_edit_key(&mut self, event: &KeyEvent) {
-        if event.state != ElementState::Pressed {
+    pub(super) fn sign_edit_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return;
         }
         if let Some(shortcut) = self.edit_shortcut(event) {

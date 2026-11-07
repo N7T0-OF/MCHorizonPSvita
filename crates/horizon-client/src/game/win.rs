@@ -10,7 +10,6 @@ use horizon_client::{
 };
 use horizon_client_platform::KeyCode;
 use std::time::Instant;
-use winit::event::{ElementState, KeyEvent};
 
 /// What closing the screen does (`WinScreen.onFinished`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,11 +81,11 @@ impl Game<'_> {
         win.screen.draw(batch, &self.gui.atlas, delta_ticks, fill);
     }
     /// `WinScreen.keyPressed` / `keyReleased`; Escape closes it (`onClose`).
-    pub(super) fn win_key(&mut self, event: &KeyEvent) -> Result<()> {
+    pub(super) fn win_key(&mut self, event: &horizon_client_platform::KeyboardEvent) -> Result<()> {
         let Some(code) = self.window_event_key else {
             return Ok(());
         };
-        let pressed = event.state == ElementState::Pressed;
+        let pressed = event.state == horizon_client_platform::KeyState::Pressed;
         if code == KeyCode::Escape && pressed {
             return self.close_win_screen();
         }

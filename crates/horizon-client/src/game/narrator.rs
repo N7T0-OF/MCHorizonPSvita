@@ -12,7 +12,7 @@ use horizon_client::{
 };
 use horizon_client_platform::KeyCode;
 use horizon_narrator::{Status, screen::Trigger};
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 
 /// `Minecraft`'s constructor: `new GameNarrator`, then
 /// `narrator.checkStatus(options.narrator().get() != OFF)`.
@@ -209,16 +209,16 @@ impl Game<'_> {
     /// The narrator hotkey on a key press or repeat, before the screen or
     /// the game takes the key (it doesn't consume it): the next status,
     /// announced with its toast, saved, then the screen hears of it.
-    pub(super) fn narrator_hotkey(&mut self, event: &KeyEvent) {
-        let letter = horizon_client_input::winit_adapter::shortcut_letter_from_winit(
-            &event.logical_key,
-            event.physical_key,
+    pub(super) fn narrator_hotkey(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        let letter = horizon_client::clipboard::shortcut_letter(
+            event.physical_key.unwrap_or(KeyCode::Other),
+            event.logical_text.as_deref(),
         );
         if letter != Some('b') {
             return;
         }
         let hotkey = is_hotkey(
-            event.state == ElementState::Pressed,
+            event.state == horizon_client_platform::KeyState::Pressed,
             self.has_control_down_with_quirk(),
             letter,
             self.edit_box_focused(),

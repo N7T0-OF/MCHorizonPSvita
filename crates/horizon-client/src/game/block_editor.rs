@@ -13,7 +13,6 @@ use horizon_client::{
 };
 use horizon_client_platform::KeyCode;
 use horizon_protocol::packets::play::Serverbound as S;
-use winit::event::{ElementState, KeyEvent};
 
 pub(super) type Pos = (i32, i32, i32);
 
@@ -436,8 +435,8 @@ impl Game<'_> {
         }
     }
 
-    pub(super) fn block_editor_key(&mut self, event: &KeyEvent) {
-        if event.state != ElementState::Pressed {
+    pub(super) fn block_editor_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return;
         }
         let Some(key) = self.window_event_key else {

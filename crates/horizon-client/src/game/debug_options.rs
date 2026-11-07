@@ -12,7 +12,6 @@ use horizon_client::{
     ui::{self, EditBox, Scroll},
 };
 use horizon_client_platform::KeyCode;
-use winit::event::{ElementState, KeyEvent};
 
 /// `HeaderAndFooterLayout(this, 61, 33)`.
 const HEADER: f32 = 61.0;
@@ -451,8 +450,8 @@ impl Game<'_> {
         }
     }
     /// A key the debug keys left: Escape closes, the rest edits the search.
-    pub(super) fn debug_options_key(&mut self, event: &KeyEvent) {
-        if event.state != ElementState::Pressed {
+    pub(super) fn debug_options_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return;
         }
         let Some(key) = self.window_event_key else {

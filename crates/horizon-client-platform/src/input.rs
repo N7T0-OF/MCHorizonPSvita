@@ -221,6 +221,29 @@ pub enum KeyCode {
     Other,
 }
 
+/// Whether a physical key is going down or up.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyState {
+    Pressed,
+    Released,
+}
+
+/// Platform-neutral keyboard input shared by desktop and native frontends.
+///
+/// `logical_text` is the layout-resolved character used by shortcuts;
+/// `text` is the text the platform says this press typed, and can include
+/// composed or multi-character output. `unmodified_text` supports learning
+/// keyboard layouts without modifiers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyboardEvent {
+    pub physical_key: Option<KeyCode>,
+    pub state: KeyState,
+    pub logical_text: Option<String>,
+    pub text: Option<String>,
+    pub unmodified_text: Option<String>,
+    pub repeat: bool,
+}
+
 /// Mouse buttons with the same one-based numbering used by `key.mouse.N`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MouseButton {

@@ -31,7 +31,6 @@ pub(super) fn chat_tree(
     }
 }
 use horizon_client_platform::KeyCode;
-use winit::event::KeyEvent;
 
 /// `base` with the commands native mods own (`native_commands`) added: each a
 /// literal that takes the rest of the line as it was typed, run by
@@ -912,7 +911,7 @@ impl Game<'_> {
         );
     }
     /// Keys while the chat screen is open.
-    pub(super) fn chat_key(&mut self, event: &KeyEvent) {
+    pub(super) fn chat_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
         if let Some(shortcut) = self.edit_shortcut(event) {
             let m = Measure(&self.gui.atlas.font);
             let c = Commands {

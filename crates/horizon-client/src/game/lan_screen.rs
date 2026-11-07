@@ -16,7 +16,6 @@ use horizon_client::{
 };
 use horizon_client_platform::KeyCode;
 use horizon_protocol::packets::play::{self, Serverbound as S};
-use winit::event::KeyEvent;
 
 pub(super) struct WorldOptions {
     remote: bool,
@@ -1227,8 +1226,8 @@ impl Game<'_> {
         self.system_message(message);
     }
 
-    pub(super) fn world_options_key(&mut self, event: &KeyEvent) {
-        if event.state != winit::event::ElementState::Pressed {
+    pub(super) fn world_options_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
+        if event.state != horizon_client_platform::KeyState::Pressed {
             return;
         }
         let Some(key) = self.window_event_key else {

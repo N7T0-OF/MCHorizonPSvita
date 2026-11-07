@@ -186,7 +186,7 @@ impl Game<'_> {
         }
     }
     /// A key press while the search box has focus.
-    pub(super) fn recipe_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn recipe_key(&mut self, event: &horizon_client_platform::KeyboardEvent) {
         if let Some(shortcut) = self.edit_shortcut(event) {
             self.recipe_shortcut(shortcut);
             return;
