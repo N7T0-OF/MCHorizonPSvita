@@ -17,11 +17,11 @@ capacity overflow and out-of-bounds patches return `HORIZON_HUD_INVALID`. A call
 report or handle these results; it must not silently claim an unsupported frame rendered.
 The backend is not connected to Horizon's client or startup menu yet.
 Paired PowerPC C and Rust layout assertions check the bridge descriptors. A
-temporary Cafe Rust staticlib has linked against this presenter. An RPX built
-with `cargo wiiu rpx` reached Cemu's title, but an instrumented probe reported
-allocation failure for both a direct C control and the Rust presenter before
-either draw. Its GFD is 16-byte aligned and lives in the executable. The failure
-stage has not yet been isolated; the Rust bridge has not been verified to draw.
+temporary Cafe Rust staticlib linked against this presenter. A diagnostic that
+selected WUT's startup initialized the heap and returned success from Rust
+presenter creation and triangle submission in Cemu; its pixels were not checked.
+The diagnostic used a broad linker override, so production startup selection is
+still unresolved. See `PORTING.md` for evidence and limitations.
 
 Build the PowerPC archive and GFD in WSL with devkitPro WUT and CafeGLSL on PATH:
 
