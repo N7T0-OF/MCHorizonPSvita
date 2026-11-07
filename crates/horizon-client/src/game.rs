@@ -22063,6 +22063,45 @@ struct Loading {
 /// handing off anyway; a host without a window must present the frame.
 const TITLE_FRAME_WAIT: Duration = Duration::from_secs(1);
 impl Loading {
+    /// Start Horizon's original resource loader and interactive startup menu.
+    fn start(
+        options: Options,
+        settings: Settings,
+        vanilla_root: PathBuf,
+        pack_error: Option<String>,
+        started: Instant,
+    ) -> Result<Self> {
+        let progress = Progress::new();
+        let (receiver, loader) =
+            startup_menu::spawn_loader(&options, &settings, &vanilla_root, started, &progress)?;
+        let menu = startup_menu::StartupMenu::new(&options, pack_error.as_deref())?;
+        Ok(Self {
+            window: None,
+            renderer: None,
+            viewport: [1280, 720],
+            boot: horizon_client::hud::HudAtlas::boot(),
+            gui: None,
+            settings,
+            fullscreen: horizon_client::window::FullscreenState::new(false),
+            video_modes: Default::default(),
+            options: Some(options),
+            vanilla_root,
+            pack_error,
+            started,
+            panorama_rotation: Default::default(),
+            progress,
+            receiver,
+            loaded: None,
+            delivered: false,
+            handle: Some(loader),
+            shown: false,
+            ui_at: None,
+            title_drawn: false,
+            menu,
+            error: None,
+        })
+    }
+
     /// The boot atlas until the original title resources arrive, then their
     /// atlas and panorama for whichever platform presents the menu.
     fn artwork(
@@ -22560,35 +22599,7 @@ fn run_loading(
     pack_error: Option<String>,
     started: Instant,
 ) -> Result<()> {
-    let progress = Progress::new();
-    let (receiver, loader) =
-        startup_menu::spawn_loader(&options, &settings, &vanilla_root, started, &progress)?;
-    let menu = startup_menu::StartupMenu::new(&options, pack_error.as_deref())?;
-    let loading = Loading {
-        window: None,
-        renderer: None,
-        viewport: [1280, 720],
-        boot: horizon_client::hud::HudAtlas::boot(),
-        gui: None,
-        settings,
-        fullscreen: horizon_client::window::FullscreenState::new(false),
-        video_modes: Default::default(),
-        options: Some(options),
-        vanilla_root,
-        pack_error,
-        started,
-        panorama_rotation: Default::default(),
-        progress,
-        receiver,
-        loaded: None,
-        delivered: false,
-        handle: Some(loader),
-        shown: false,
-        ui_at: None,
-        title_drawn: false,
-        menu,
-        error: None,
-    };
+    let loading = Loading::start(options, settings, vanilla_root, pack_error, started)?;
     let mut app = App::Loading(Box::new(loading));
     let result = EventLoop::new()?.run_app(&mut app);
     narrator::stop();

@@ -1372,6 +1372,135 @@ mod tests {
     }
 
     #[test]
+    fn loading_start_uses_the_real_menu_and_reports_loader_failure() {
+        const CHILD: &str = "HORIZON_WIIU_TEST_LOADING_CHILD";
+        const SUCCESS: &str = "HORIZON_WIIU_REAL_LOADER_JOINED";
+        if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new("1")) {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let temp = std::env::temp_dir().canonicalize().unwrap();
+            let scratch = temp.join(format!(
+                "horizon-startup-test-{}-{unique}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&scratch).unwrap();
+            let scratch = scratch.canonicalize().unwrap();
+            assert_eq!(scratch.parent(), Some(temp.as_path()));
+            struct Scratch(PathBuf);
+            impl Drop for Scratch {
+                fn drop(&mut self) {
+                    let _ = std::fs::remove_dir_all(&self.0);
+                }
+            }
+            let scratch = Scratch(scratch);
+            for name in ["horizon", "launcher", "data", "config"] {
+                std::fs::create_dir(scratch.0.join(name)).unwrap();
+            }
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "--nocapture",
+                    "game::startup_menu::tests::loading_start_uses_the_real_menu_and_reports_loader_failure",
+                ])
+                .current_dir(&scratch.0)
+                .env(CHILD, "1")
+                .env("HORIZON_HOME", scratch.0.join("horizon"))
+                .env("HORIZON_LAUNCHER_HOME", scratch.0.join("launcher"))
+                .env("XDG_DATA_HOME", scratch.0.join("data"))
+                .env("XDG_CONFIG_HOME", scratch.0.join("config"))
+                .env("HORIZON_LAUNCHER_TRASH", scratch.0.join("trash"))
+                .env("HORIZON_LAUNCHER_CLIPBOARD", scratch.0.join("clipboard"))
+                .env("HORIZON_LAUNCHER_DESKTOP", scratch.0.join("desktop"))
+                .env("HORIZON_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("HORIZON_NO_AUDIO", "1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "isolated startup test failed:\n{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(String::from_utf8_lossy(&result.stdout).contains(SUCCESS));
+            return;
+        }
+        // Never let an inherited child sentinel direct the real loader at a
+        // player's working directory or homes.
+        let scratch = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        assert_eq!(scratch.parent(), Some(temp.as_path()));
+        assert!(
+            scratch
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("horizon-startup-test-")
+        );
+        for (var, name) in [
+            ("HORIZON_HOME", "horizon"),
+            ("HORIZON_LAUNCHER_HOME", "launcher"),
+            ("XDG_DATA_HOME", "data"),
+            ("XDG_CONFIG_HOME", "config"),
+            ("HORIZON_LAUNCHER_TRASH", "trash"),
+            ("HORIZON_LAUNCHER_CLIPBOARD", "clipboard"),
+            ("HORIZON_LAUNCHER_DESKTOP", "desktop"),
+        ] {
+            assert_eq!(
+                std::env::var_os(var).map(PathBuf::from),
+                Some(scratch.join(name))
+            );
+        }
+        assert_eq!(
+            std::env::var("HORIZON_LAUNCHER_NO_SELF_UPDATE").as_deref(),
+            Ok("1")
+        );
+        assert_eq!(std::env::var("HORIZON_NO_AUDIO").as_deref(), Ok("1"));
+        let root = scratch.join("missing-resources");
+        assert!(!root.exists());
+        let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
+        options.resources = root.clone();
+        options.world = Some("TestWorld".into());
+        options.seed = 42;
+        options.creative = true;
+        let started = Instant::now();
+        let mut loading = Loading::start(
+            options,
+            Settings::default(),
+            root.clone(),
+            Some("pack error".into()),
+            started,
+        )
+        .unwrap();
+        assert_eq!(loading.vanilla_root, root);
+        assert_eq!(loading.started, started);
+        assert!(loading.window.is_none());
+        assert!(loading.renderer.is_none());
+        assert!(loading.menu.options_open);
+        assert_eq!(
+            loading.menu.options.resource_error.as_deref(),
+            Some("pack error")
+        );
+        assert!(matches!(
+            &loading.menu.pending,
+            Some(PendingWorldEntry::Local { folder, seed: Some(42), creative: true, .. })
+                if folder == "TestWorld"
+        ));
+
+        loading.handle.take().unwrap().join().unwrap();
+        let result = loading
+            .receiver
+            .try_iter()
+            .find_map(|message| match message {
+                LoaderMsg::Done(result) => Some(result),
+                LoaderMsg::Ui(..) => None,
+            });
+        assert!(matches!(result, Some(Err(_))));
+        println!("{SUCCESS}");
+    }
+
+    #[test]
     fn the_world_renderer_waits_for_the_first_title_frame() {
         let (_send, receiver) = std::sync::mpsc::channel();
         let mut loading = loading(receiver);
