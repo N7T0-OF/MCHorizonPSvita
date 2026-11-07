@@ -1,0 +1,17 @@
+[package]
+name = "horizon-resource-zip"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.90"
+description = "Horizon resource pack archive reader"
+
+[dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
+zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+miniz_oxide = "0.8"
+
+[lints]
+workspace = true

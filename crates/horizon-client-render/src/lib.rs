@@ -117,7 +117,7 @@ pub mod weather;
 pub mod widgets;
 pub mod world;
 pub mod worldborder;
-pub mod zip;
+pub use horizon_resource_zip as zip;
 pub use horizon_client_core::Result;
 pub use horizon_client_core::block_entity_nbt;
 pub use horizon_client_core::bossbar;

@@ -1541,6 +1541,7 @@ dependencies = [
  "horizon-narrator",
  "horizon-optifine",
  "horizon-protocol",
+ "horizon-resource-zip",
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-telemetry",
@@ -1783,6 +1784,15 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "ring",
+]
+
+[[package]]
+name = "horizon-resource-zip"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "miniz_oxide 0.8.9",
+ "zip",
 ]
 
 [[package]]

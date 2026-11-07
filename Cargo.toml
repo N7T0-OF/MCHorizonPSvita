@@ -4,6 +4,7 @@ members = [
     "crates/horizon-core",
     "crates/horizon-terrain-data",
     "crates/horizon-hud-data",
+    "crates/horizon-resource-zip",
     "crates/horizon-terrain-mesh",
     "crates/horizon-dualsense",
     "crates/horizon-narrator",

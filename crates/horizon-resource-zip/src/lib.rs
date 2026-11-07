@@ -11,6 +11,13 @@ use std::{
 };
 use zip::{CompressionMethod, ZipArchive};
 
+// Cafe's standard library exposes seek and read, but not a positional-read
+// extension. All clones of a reader share this lock around both operations.
+#[cfg(not(any(unix, windows)))]
+type SharedFile = std::sync::Mutex<fs::File>;
+#[cfg(any(unix, windows))]
+type SharedFile = fs::File;
+
 /// The most one entry inflates to: far above any real pack file, but a zip
 /// bomb stops here.
 const MAX_ENTRY: usize = 1 << 30;
@@ -30,14 +37,24 @@ fn invalid(e: impl std::fmt::Display) -> io::Error {
 }
 /// `file`'s bytes at `at`, which any number of readers may do at once: the
 /// file has no cursor for them to share.
-fn read_at(file: &fs::File, out: &mut [u8], at: u64) -> io::Result<usize> {
+fn read_at(file: &SharedFile, out: &mut [u8], at: u64) -> io::Result<usize> {
     #[cfg(unix)]
     return std::os::unix::fs::FileExt::read_at(file, out, at);
     #[cfg(windows)]
     return std::os::windows::fs::FileExt::seek_read(file, out, at);
+    #[cfg(not(any(unix, windows)))]
+    return read_at_locked(file, out, at);
+}
+#[cfg(any(not(any(unix, windows)), test))]
+fn read_at_locked(file: &std::sync::Mutex<fs::File>, out: &mut [u8], at: u64) -> io::Result<usize> {
+    let mut file = file
+        .lock()
+        .map_err(|_| io::Error::other("archive file lock poisoned"))?;
+    file.seek(SeekFrom::Start(at))?;
+    file.read(out)
 }
 /// The bytes of `file` from `start` to `end`.
-fn read_range(file: &fs::File, start: u64, end: u64) -> io::Result<Vec<u8>> {
+fn read_range(file: &SharedFile, start: u64, end: u64) -> io::Result<Vec<u8>> {
     let mut out = vec![0; (end - start) as usize];
     let mut done = 0;
     while done < out.len() {
@@ -54,7 +71,7 @@ fn read_range(file: &fs::File, start: u64, end: u64) -> io::Result<Vec<u8>> {
 #[derive(Clone)]
 struct Reader {
     /// What comes before the tail; none when the tail is the whole archive.
-    file: Option<Arc<fs::File>>,
+    file: Option<Arc<SharedFile>>,
     tail: Arc<[u8]>,
     tail_at: u64,
     position: u64,
@@ -97,6 +114,8 @@ impl Zip {
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = fs::File::open(path)?;
         let len = file.metadata()?.len();
+        #[cfg(not(any(unix, windows)))]
+        let file = std::sync::Mutex::new(file);
         let mut tail_at = len.saturating_sub((END_HEADER + u16::MAX as usize) as u64);
         let mut tail = read_range(&file, tail_at, len)?;
         if let Some(end) = find_end(&tail) {
@@ -266,6 +285,45 @@ fn normalize_end(data: &mut [u8]) {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn locked_positional_reads_keep_offsets_separate_and_report_errors() {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "horizon-zip-position-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut writer = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        writer.write_all(b"first---second").unwrap();
+        let write_only = std::sync::Mutex::new(writer);
+        assert!(read_at_locked(&write_only, &mut [0; 5], 0).is_err());
+        drop(write_only);
+
+        let file = std::sync::Mutex::new(fs::File::open(&path).unwrap());
+        std::thread::scope(|scope| {
+            for (offset, expected) in [(0, &b"first"[..]), (8, &b"second"[..])] {
+                let file = &file;
+                scope.spawn(move || {
+                    for _ in 0..1000 {
+                        let mut out = [0; 6];
+                        let read =
+                            read_at_locked(file, &mut out[..expected.len()], offset).unwrap();
+                        assert_eq!(&out[..read], expected);
+                    }
+                });
+            }
+        });
+        drop(file);
+        fs::remove_file(path).unwrap();
+    }
     /// `bytes` as a file and opened, the file removed again where the system lets it.
     fn opened(test: &str, bytes: &[u8]) -> io::Result<Zip> {
         let path =
