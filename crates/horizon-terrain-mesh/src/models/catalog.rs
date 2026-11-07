@@ -61,6 +61,17 @@ pub struct StateModels {
 fn key(variant: &Variant) -> VariantKey {
     (variant.model.clone(), variant.rotations, variant.uv_lock)
 }
+fn resolve_unique_models<T>(
+    names: impl IntoIterator<Item = String>,
+    mut resolve: impl FnMut(&str) -> Result<T>,
+) -> Result<BTreeMap<String, T>> {
+    names
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|name| Ok((name.clone(), resolve(&name)?)))
+        .collect()
+}
 /// Bakes model `name` of `library`, turned and UV-locked as a variant says.
 fn bake_variant(
     root: &Path,
@@ -327,24 +338,25 @@ impl StateModels {
                 models.block_library_or_missing(root, names)?
             }
         };
-        let resolved: Vec<_> = variants
-            .iter()
-            .map(|(name, ..)| library.resolve(name))
-            .collect();
+        let resolved =
+            resolve_unique_models(variants.iter().map(|(name, ..)| name.clone()), |name| {
+                Ok(library.resolve(name)?)
+            })?;
         // Every texture the models name, decoded side by side before the bake adds them one
-        // by one in its own order.
+        // by one in its own order. A model can have many rotated variants, but resolving its
+        // parent chain and inherited texture slots does not depend on the variant's transform.
         sprites.prefetch(
             root,
             resolved
-                .iter()
-                .flatten()
+                .values()
                 .flat_map(|model| model.textures.values())
                 .map(|material| material.sprite.as_str()),
         );
         let mut baked = Vec::with_capacity(variants.len());
         let mut index = BTreeMap::new();
-        for ((name, turns, lock), model) in variants.into_iter().zip(resolved) {
-            let model = bake_resolved(root, sprites, &model?, turns, lock)?;
+        for (name, turns, lock) in variants {
+            let model = resolved.get(&name).expect("variant model was resolved");
+            let model = bake_resolved(root, sprites, model, turns, lock)?;
             index.insert((name.clone(), turns, lock), baked.len() as u32);
             let variant = Variant {
                 model: name,
@@ -540,6 +552,83 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn resolve_once_per_model_keeps_each_transformed_variant_bake() -> Result<()> {
+        let fixture = Fixture(
+            std::env::temp_dir().join(format!("horizon-unique-resolution-{}", std::process::id())),
+        );
+        fixture.write(
+            "lanef:block/shaft",
+            r##"{"textures":{"side":"lanef:block/shaft"},"elements":[{"from":[6,6,0],"to":[10,10,8],"faces":{"north":{"texture":"#side"},"up":{"texture":"#side"}}}]}"##,
+        );
+        fixture.write(
+            "lanef:block/cog",
+            r#"{"parent":"lanef:block/shaft","textures":{"side":"lanef:block/cog"}}"#,
+        );
+        let library = ParsedModels::default().block_library(
+            &fixture.0,
+            vec!["lanef:block/shaft".into(), "lanef:block/cog".into()],
+        )?;
+        let variants: BTreeSet<VariantKey> = BTreeSet::from([
+            ("lanef:block/shaft".into(), [0, 0, 0], false),
+            ("lanef:block/shaft".into(), [0, 90, 0], false),
+            ("lanef:block/shaft".into(), [0, 180, 0], false),
+            ("lanef:block/shaft".into(), [0, 90, 0], true),
+            ("lanef:block/cog".into(), [0, 0, 0], false),
+        ]);
+        let mut resolved_names = BTreeMap::new();
+        let resolved =
+            resolve_unique_models(variants.iter().map(|(name, ..)| name.clone()), |name| {
+                *resolved_names.entry(name.to_owned()).or_insert(0usize) += 1;
+                Ok(library.resolve(name)?)
+            })?;
+        assert_eq!(
+            resolved_names,
+            BTreeMap::from([
+                ("lanef:block/cog".to_owned(), 1),
+                ("lanef:block/shaft".to_owned(), 1),
+            ])
+        );
+        assert_eq!(resolved.len(), 2);
+
+        let mut sprites = Sprites::default();
+        let mut shared_bakes = Vec::new();
+        let mut baseline_bakes = Vec::new();
+        for (name, turns, lock) in &variants {
+            shared_bakes.push(bake_resolved(
+                &fixture.0,
+                &mut sprites,
+                &resolved[name],
+                *turns,
+                *lock,
+            )?);
+            baseline_bakes.push(bake_variant(
+                &fixture.0,
+                &mut sprites,
+                &library,
+                name,
+                *turns,
+                *lock,
+            )?);
+        }
+        assert_eq!(shared_bakes.len(), variants.len());
+        assert_eq!(baseline_bakes.len(), variants.len());
+        for (shared, baseline) in shared_bakes.iter().zip(&baseline_bakes) {
+            assert_eq!(shared.ambient_occlusion, baseline.ambient_occlusion);
+            assert_eq!(shared.particle, baseline.particle);
+            assert_eq!(shared.faces.len(), baseline.faces.len());
+            for (shared, baseline) in shared.faces.iter().zip(&baseline.faces) {
+                assert_eq!(shared.quad, baseline.quad);
+                assert_eq!(shared.layer, baseline.layer);
+                assert_eq!(shared.opaque, baseline.opaque);
+                assert_eq!(shared.translucent, baseline.translucent);
+                assert_eq!(shared.fusion, baseline.fusion);
+            }
+        }
+        assert_ne!(shared_bakes[0].faces[0].quad, shared_bakes[1].faces[0].quad);
+        Ok(())
     }
 
     #[test]
