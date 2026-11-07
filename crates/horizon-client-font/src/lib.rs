@@ -4,6 +4,7 @@
 pub mod bidi;
 pub mod font;
 pub mod image;
+pub mod title_edition;
 
 use horizon_client_core::{lang, text};
 use horizon_core::fast_hash;

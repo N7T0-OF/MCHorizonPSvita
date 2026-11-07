@@ -3,6 +3,28 @@ use std::path::Path;
 
 use horizon_client_core::Result;
 
+/// `TextureMetadataSection`'s `blur` and `clamp`: how vanilla samples a
+/// standalone texture (`ReloadableTexture.setSampler`: linear rather than
+/// nearest filtering, clamp-to-edge rather than repeat addressing).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextureFlags {
+    pub blur: bool,
+    pub clamp: bool,
+}
+impl TextureFlags {
+    /// The `texture` section of a `.png.mcmeta` file, if it sets either flag.
+    pub fn from_mcmeta(json: &str) -> Option<Self> {
+        let meta: serde_json::Value = serde_json::from_str(json).ok()?;
+        let section = meta.get("texture")?;
+        let flag = |key| section.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+        let flags = Self {
+            blur: flag("blur"),
+            clamp: flag("clamp"),
+        };
+        (flags != Self::default()).then_some(flags)
+    }
+}
+
 pub fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
     decode_bytes(&horizon_core::prepared_files::read(path)?)
 }

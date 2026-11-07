@@ -109,7 +109,7 @@ pub mod telemetry;
 pub mod test_block;
 pub mod test_instance_block;
 pub mod testgen;
-pub mod title_edition;
+pub use horizon_client_font::title_edition;
 pub mod trims;
 pub mod ui;
 pub mod vault;

@@ -16,27 +16,7 @@ mod pack_text;
 pub use desktop::HudRenderer;
 
 pub use horizon_client_core::ui_geometry::Rect;
-/// `TextureMetadataSection`'s `blur` and `clamp`: how vanilla samples a
-/// standalone texture (`ReloadableTexture.setSampler`: linear rather than
-/// nearest filtering, clamp-to-edge rather than repeat addressing).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TextureFlags {
-    pub blur: bool,
-    pub clamp: bool,
-}
-impl TextureFlags {
-    /// The `texture` section of a `.png.mcmeta` file, if it sets either flag.
-    pub fn from_mcmeta(json: &str) -> Option<Self> {
-        let meta: serde_json::Value = serde_json::from_str(json).ok()?;
-        let section = meta.get("texture")?;
-        let flag = |key| section.get(key).and_then(serde_json::Value::as_bool) == Some(true);
-        let flags = Self {
-            blur: flag("blur"),
-            clamp: flag("clamp"),
-        };
-        (flags != Self::default()).then_some(flags)
-    }
-}
+pub use horizon_client_font::image::TextureFlags;
 pub struct HudAtlas {
     /// Identity of this packed atlas, used to invalidate cached model UV data
     /// even when a resource reload places sprites at the same coordinates.
