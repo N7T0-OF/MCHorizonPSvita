@@ -35,15 +35,7 @@ pub struct Glyph {
     /// Shadow and bold offset (1 for bitmap and TrueType glyphs, 0.5 for unihex).
     pub offset: f32,
 }
-/// Pixels to copy into the shared atlas before the next HUD draw.
-#[derive(Clone, Debug)]
-pub struct Patch {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
+pub use horizon_hud_data::Patch;
 #[derive(Clone, Copy)]
 struct HexGlyph {
     /// Rows left-aligned in 32 bits.
