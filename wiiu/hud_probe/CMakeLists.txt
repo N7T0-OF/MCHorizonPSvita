@@ -28,7 +28,8 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/hud_probe_gsh.o"
    COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_BINARY_DIR}/hud_lib/hud.gsh" hud_probe.gsh
    COMMAND "${POWERPC_OBJCOPY_EXECUTABLE}" -I binary -O elf32-powerpc -B powerpc:common
       --set-section-alignment .data=256 hud_probe.gsh hud_probe_gsh.o
-   DEPENDS horizon_gx2_hud_shader WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" VERBATIM)
+   DEPENDS horizon_gx2_hud_shader "${CMAKE_CURRENT_BINARY_DIR}/hud_lib/hud.gsh"
+   WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" VERBATIM)
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/hud_probe_gsh.o" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
 add_executable(horizon_wiiu_hud_probe "${WUT_CRT0_OBJECT}" main.c "${CMAKE_CURRENT_BINARY_DIR}/hud_probe_gsh.o")
 add_dependencies(horizon_wiiu_hud_probe hud_probe_wut)
