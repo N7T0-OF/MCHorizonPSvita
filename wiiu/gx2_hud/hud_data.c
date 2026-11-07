@@ -37,7 +37,7 @@ HorizonHudResult horizon_hud_validate(const HorizonHudFrame *f, uint32_t width,
    for (uint32_t i = 0; i < f->patch_count; ++i) {
       const HorizonHudPatch *p = &f->patches[i];
       size_t bytes;
-      if (!p->rgba || p->x > width || p->y > height || p->width > width - p->x ||
+      if (!p->rgba || !p->width || !p->height || p->x > width || p->y > height || p->width > width - p->x ||
           p->height > height - p->y || !horizon_hud_rgba_bytes(p->width, p->height, &bytes) ||
           bytes > p->length)
          return HORIZON_HUD_INVALID;

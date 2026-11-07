@@ -10,5 +10,6 @@ cafe = []
 
 [dependencies]
 horizon-client-input = { path = "../../crates/horizon-client-input", default-features = false }
+horizon-hud-data = { path = "../../crates/horizon-hud-data" }
 
 [workspace]

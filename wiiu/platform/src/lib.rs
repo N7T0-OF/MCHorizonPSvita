@@ -5,6 +5,8 @@
 
 use horizon_client_input::gamepad::{Button, PadState};
 
+pub mod hud;
+
 /// The scalar subset read from WUT's `VPADStatus` by `vpad_bridge.c`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]

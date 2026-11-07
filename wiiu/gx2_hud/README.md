@@ -6,7 +6,8 @@ must initialize GX2 before creating the presenter, call it on the render thread,
 GX2 color target, and provide a GFD from `hud.vert`/`hud.frag`. Keep the GFD
 bytes alive until the presenter is destroyed. Atlas input is copied; patches and frame
 data are borrowed only for the duration of a draw. The draw changes GX2 render state.
-The caller must map each `Blend` variant explicitly to `HorizonHudBlend`; Rust's
+The Rust bridge in `wiiu/platform/src/hud.rs` accepts Horizon's original `Blend`
+and font `Patch` values. It maps supported blends explicitly because Rust's
 `Blend` enum and its `Depth`/`CitGlint` payloads have no C ABI.
 
 Only alpha runs and the native GUI shader are implemented. Invert, additive, depth,
@@ -15,8 +16,12 @@ vignette, end portal, CIT glint, vanilla glint UVs and resource-pack text shader
 capacity overflow and out-of-bounds patches return `HORIZON_HUD_INVALID`. A caller must
 report or handle these results; it must not silently claim an unsupported frame rendered.
 The backend is not connected to Horizon's client or startup menu yet.
-The C layout assertions check the bridge definition only; a Rust-to-C ABI check and
-an RPX link are still required.
+Paired PowerPC C and Rust layout assertions check the bridge descriptors. A
+temporary Cafe Rust staticlib has linked against this presenter. An RPX built
+with `cargo wiiu rpx` reached Cemu's title, but an instrumented probe reported
+allocation failure for both a direct C control and the Rust presenter before
+either draw. Its GFD is 16-byte aligned and lives in the executable. The failure
+stage has not yet been isolated; the Rust bridge has not been verified to draw.
 
 Build the PowerPC archive and GFD in WSL with devkitPro WUT and CafeGLSL on PATH:
 

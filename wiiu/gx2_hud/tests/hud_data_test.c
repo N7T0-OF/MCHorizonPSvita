@@ -38,7 +38,11 @@ int main(void)
    assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_INVALID);
    patch.x = 2; patch.length = 15;
    assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_INVALID);
-   patch.length = sizeof(rgba); vertices[0].uv[0] = 2.0f;
+   patch.length = sizeof(rgba); patch.width = 0;
+   assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_INVALID);
+   patch.width = 2; patch.height = 0;
+   assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_INVALID);
+   patch.height = 2; vertices[0].uv[0] = 2.0f;
    assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_UNSUPPORTED);
    vertices[0].uv[0] = 0.25f; frame.pack_text_shader = 1;
    assert(horizon_hud_validate(&frame, 8, 8, 6) == HORIZON_HUD_UNSUPPORTED);

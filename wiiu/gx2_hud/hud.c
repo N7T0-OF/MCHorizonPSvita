@@ -14,11 +14,36 @@
 #include <whb/gfx.h>
 
 _Static_assert(sizeof(HorizonHudVertex) == 36, "Horizon HudVertex layout changed");
+_Static_assert(_Alignof(HorizonHudVertex) == 4, "Horizon HudVertex alignment changed");
 _Static_assert(offsetof(HorizonHudVertex, uv) == 8, "Horizon UV offset changed");
 _Static_assert(offsetof(HorizonHudVertex, color) == 16, "Horizon color offset changed");
 _Static_assert(offsetof(HorizonHudVertex, depth) == 20, "Horizon depth offset changed");
 _Static_assert(offsetof(HorizonHudVertex, glint_uv) == 24, "Horizon glint UV offset changed");
 _Static_assert(offsetof(HorizonHudVertex, text) == 32, "Horizon text offset changed");
+
+/* The Rust Cafe bridge declares the same 32-bit C ABI in wiiu/platform/src/hud.rs. */
+_Static_assert(sizeof(HorizonHudRun) == 12 && _Alignof(HorizonHudRun) == 4, "HUD run ABI changed");
+_Static_assert(offsetof(HorizonHudRun, start) == 0, "HUD run start offset changed");
+_Static_assert(offsetof(HorizonHudRun, end) == 4, "HUD run end offset changed");
+_Static_assert(offsetof(HorizonHudRun, blend) == 8, "HUD run blend offset changed");
+_Static_assert(sizeof(HorizonHudPatch) == 24 && _Alignof(HorizonHudPatch) == 4, "HUD patch ABI changed");
+_Static_assert(offsetof(HorizonHudPatch, x) == 0, "HUD patch x offset changed");
+_Static_assert(offsetof(HorizonHudPatch, y) == 4, "HUD patch y offset changed");
+_Static_assert(offsetof(HorizonHudPatch, width) == 8, "HUD patch width offset changed");
+_Static_assert(offsetof(HorizonHudPatch, height) == 12, "HUD patch height offset changed");
+_Static_assert(offsetof(HorizonHudPatch, rgba) == 16, "HUD patch pixels offset changed");
+_Static_assert(offsetof(HorizonHudPatch, length) == 20, "HUD patch length offset changed");
+_Static_assert(sizeof(HorizonHudFrame) == 40 && _Alignof(HorizonHudFrame) == 4, "HUD frame ABI changed");
+_Static_assert(offsetof(HorizonHudFrame, vertices) == 0, "HUD frame vertices offset changed");
+_Static_assert(offsetof(HorizonHudFrame, vertex_count) == 4, "HUD frame vertex count offset changed");
+_Static_assert(offsetof(HorizonHudFrame, runs) == 8, "HUD frame runs offset changed");
+_Static_assert(offsetof(HorizonHudFrame, run_count) == 12, "HUD frame run count offset changed");
+_Static_assert(offsetof(HorizonHudFrame, patches) == 16, "HUD frame patches offset changed");
+_Static_assert(offsetof(HorizonHudFrame, patch_count) == 20, "HUD frame patch count offset changed");
+_Static_assert(offsetof(HorizonHudFrame, viewport_width) == 24, "HUD frame viewport width offset changed");
+_Static_assert(offsetof(HorizonHudFrame, viewport_height) == 28, "HUD frame viewport height offset changed");
+_Static_assert(offsetof(HorizonHudFrame, scale) == 32, "HUD frame scale offset changed");
+_Static_assert(offsetof(HorizonHudFrame, pack_text_shader) == 36, "HUD frame shader offset changed");
 
 struct HorizonGx2Hud {
    WHBGfxShaderGroup shader;
