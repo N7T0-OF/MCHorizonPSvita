@@ -1,6 +1,7 @@
 [workspace]
-exclude = ["launcher", "crates/horizon-telemetry-server", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys"]
+exclude = ["launcher", "crates/horizon-telemetry-server", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys", "third_party/getrandom-0.4.3"]
 members = [
+    "wiiu/entropy",
     "crates/horizon-core",
     "crates/horizon-terrain-data",
     "crates/horizon-hud-data",
@@ -82,6 +83,8 @@ naga = { path = "third_party/naga" }
 # game died before main on CPUs without it (Core 2, #7264; THIRD_PARTY_NOTICES.md). Drop this and
 # the folder once a libmimalloc-sys release has microsoft/mimalloc#1291's fix.
 libmimalloc-sys = { path = "third_party/libmimalloc-sys" }
+# Keep getrandom 0.4's Cafe custom callback separate from 0.3's distinct Rust ABI.
+getrandom = { path = "third_party/getrandom-0.4.3" }
 
 # Line tables keep file:line in backtraces; full debug info made every
 # example and test binary hundreds of megabytes and slow to link.
