@@ -22,19 +22,7 @@ use std::{
 /// `FontDescription.DEFAULT`.
 pub const DEFAULT: &str = "minecraft:default";
 
-/// A glyph ready to draw: atlas UVs and its box relative to the pen
-/// position (GlyphBitmap left/top/right/bottom), in GUI pixels.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Glyph {
-    pub rect: Option<Rect>,
-    pub left: f32,
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
-    pub advance: f32,
-    /// Shadow and bold offset (1 for bitmap and TrueType glyphs, 0.5 for unihex).
-    pub offset: f32,
-}
+pub use horizon_client_core::ui_geometry::Glyph;
 pub use horizon_hud_data::Patch;
 #[derive(Clone, Copy)]
 struct HexGlyph {

@@ -15,29 +15,7 @@ mod desktop;
 mod pack_text;
 pub use desktop::HudRenderer;
 
-/// A sprite's atlas region, and its size in GUI pixels: the size of the
-/// default resources' texture of that name, whatever the resolution of the
-/// pack that replaced it (vanilla's GUI code draws in those units: `blit`
-/// divides by the texture size it is given, sprites by their `gui.scaling`
-/// size). Textures the default resources lack keep their own size.
-#[derive(Clone, Copy, Debug)]
-pub struct Rect {
-    pub u0: f32,
-    pub v0: f32,
-    pub u1: f32,
-    pub v1: f32,
-    pub w: u32,
-    pub h: u32,
-}
-impl Rect {
-    /// The region's size in texels of an atlas this large.
-    pub fn texels(&self, (width, height): (u32, u32)) -> (u32, u32) {
-        (
-            ((self.u1 - self.u0) * width as f32).round() as u32,
-            ((self.v1 - self.v0) * height as f32).round() as u32,
-        )
-    }
-}
+pub use horizon_client_core::ui_geometry::Rect;
 /// `TextureMetadataSection`'s `blur` and `clamp`: how vanilla samples a
 /// standalone texture (`ReloadableTexture.setSampler`: linear rather than
 /// nearest filtering, clamp-to-edge rather than repeat addressing).
