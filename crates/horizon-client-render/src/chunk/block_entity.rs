@@ -341,13 +341,7 @@ pub struct SkullSkin {
     pub texture: Option<String>,
     pub fallback: &'static str,
 }
-/// `Either<String, UUID>`: the key a `Dynamic` `ResolvableProfile` resolves
-/// by (`ResolvableProfile.nameOrId`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum NameOrId {
-    Name(String),
-    Id(u128),
-}
+pub use horizon_client_core::player_profile::NameOrId;
 /// `CrafterBlockEntity`: nine slots that can be disabled, the powered flag
 /// and the ticks left in the crafting animation.
 #[derive(Clone, Debug, Default)]

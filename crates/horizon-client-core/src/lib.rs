@@ -17,6 +17,7 @@ pub mod nbt_path;
 pub mod nbt_value;
 pub mod particle_type;
 pub mod pattern;
+pub mod player_profile;
 pub mod potions;
 pub mod registries;
 pub mod scoreboard;

@@ -1426,6 +1426,7 @@ dependencies = [
 name = "horizon-client-core"
 version = "0.1.0"
 dependencies = [
+ "horizon-core",
  "horizon-world",
  "serde_json",
 ]

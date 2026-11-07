@@ -20,6 +20,8 @@ pub mod fast_hash;
 #[cfg(not(feature = "wiiu-core"))]
 pub mod geometry;
 #[cfg(not(feature = "wiiu-core"))]
+pub mod identity;
+#[cfg(not(feature = "wiiu-core"))]
 pub mod jmath;
 #[cfg(not(feature = "wiiu-core"))]
 pub mod no_ai;

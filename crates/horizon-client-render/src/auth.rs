@@ -31,13 +31,7 @@ impl std::fmt::Debug for AuthSession {
     }
 }
 
-/// A UUID with or without dashes.
-pub fn parse_uuid(text: &str) -> Option<u128> {
-    let hex: String = text.chars().filter(|c| *c != '-').collect();
-    (hex.len() == 32)
-        .then(|| u128::from_str_radix(&hex, 16).ok())
-        .flatten()
-}
+pub use horizon_client_core::player_profile::parse_uuid;
 
 impl AuthSession {
     /// For tests and harnesses.
