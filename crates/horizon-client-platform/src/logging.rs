@@ -266,6 +266,10 @@ pub fn open_latest(dir: &Path) -> io::Result<Option<Latest>> {
         .create(true)
         .truncate(false)
         .open(dir.join(".lock"))?;
+    // The Cafe std implementation exposes File::try_lock but reports it as
+    // unsupported. A Wii U title is a single process, so keep the lock file
+    // handle alive without trying to take a host-style advisory lock.
+    #[cfg(not(all(feature = "cafe", target_arch = "powerpc")))]
     match lock.try_lock() {
         Ok(()) => {}
         Err(fs::TryLockError::WouldBlock) => return Ok(None),

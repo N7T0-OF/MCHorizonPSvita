@@ -33,6 +33,16 @@ const COLUMN_COUNT: usize = 16 * 16;
 const APP_HOME_PATH: &str = "/vol/external01/wiiu/apps/HorizonWiiU";
 const STATUS_PATH: &str = "/vol/external01/wiiu/apps/HorizonWiiU/worldgen-status.log";
 
+/// Start Horizon's own file and serial logger before the C bootstrap initializes GX2.
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_wiiu_log_init() {
+    #[cfg(all(feature = "cafe", target_arch = "powerpc"))]
+    {
+        horizon_client_platform::logging::init(Path::new(APP_HOME_PATH), "Render thread");
+        log::info!("HorizonWiiU: Cafe diagnostic logger initialized");
+    }
+}
+
 struct TerrainAtlas {
     pixels: Box<[u8]>,
     width: u32,
@@ -746,8 +756,6 @@ pub extern "C" fn horizon_wiiu_world_init(
     error_out: *mut c_char,
     error_capacity: u32,
 ) -> i32 {
-    #[cfg(all(feature = "cafe", target_arch = "powerpc"))]
-    horizon_client_platform::logging::init(Path::new(APP_HOME_PATH), "Render thread");
     write_status("world init entered\n");
     if resources.is_null() || spawn_out.is_null() {
         copy_error("null world-init argument", error_out, error_capacity);

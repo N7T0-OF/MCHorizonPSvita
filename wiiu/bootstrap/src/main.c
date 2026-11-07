@@ -80,6 +80,7 @@ extern void horizon_wiiu_camera_motion(float yaw_degrees,
                                        float strafe,
                                        float output[2]);
 #ifdef HORIZON_WIIU_WORLDGEN
+extern void horizon_wiiu_log_init(void);
 extern int32_t horizon_wiiu_world_init(const char *resources, int64_t seed,
                                         uint32_t profile, int32_t spawn[2], char *error,
                                         uint32_t errorCapacity);
@@ -812,6 +813,9 @@ main(int argc, char **argv)
 
    OSReport("HorizonWiiU: Cafe entrypoint reached\n");
    WHBProcInit();
+#ifdef HORIZON_WIIU_WORLDGEN
+   horizon_wiiu_log_init();
+#endif
    OSReport("HorizonWiiU: process services initialized\n");
    if (!WHBGfxInit()) {
       OSReport("HorizonWiiU: GX2 initialization failed\n");
