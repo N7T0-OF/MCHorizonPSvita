@@ -3010,50 +3010,10 @@ impl Drop for SaveDir {
     }
 }
 
-pub fn read_dat(path: &Path) -> Option<Tag> {
-    try_read_dat(path).ok()
-}
-/// `read_dat`, with why the file did not read.
-fn try_read_dat(path: &Path) -> std::result::Result<Tag, DatIssue> {
-    let bytes = fs::read(path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => DatIssue::Missing,
-        _ => DatIssue::Unreadable(e.to_string()),
-    })?;
-    let raw = match Compression::Gzip.decode(&bytes, Limits::saved().max_bytes) {
-        Ok(raw) => raw,
-        Err(_) => bytes,
-    };
-    nbt::read_named(&raw, Limits::saved())
-        .map(|(named, _)| named.tag)
-        .map_err(|e| DatIssue::Unreadable(e.to_string()))
-}
-/// What `LevelStorageAccess.collectIssues` finds wrong with a level.dat.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DatIssue {
-    /// No such file (`FileNotFoundException`).
-    Missing,
-    /// It exists but does not read as a level: why.
-    Unreadable(String),
-}
-/// `LevelStorageAccess.collectIssues`: why level.dat (level.dat_old with
-/// `old`) can't be read as the world's level data, `None` when it can.
-pub fn level_dat_issue(dir: &Path, old: bool) -> Option<DatIssue> {
-    let file = if old { "level.dat_old" } else { "level.dat" };
-    match try_read_dat(&dir.join(file)) {
-        Ok(root) if matches!(root.get("Data"), Some(Tag::Compound(_))) => None,
-        Ok(_) => Some(DatIssue::Unreadable("Invalid root tag".into())),
-        Err(issue) => Some(issue),
-    }
-}
-/// `WorldOpenFlows.openWorldLoadLevelData`: what keeps `world`'s level data from reading, which
-/// opens RecoverWorldDataScreen instead of the world. A folder with neither level.dat nor
-/// level.dat_old is a world not made yet, not a broken one.
-pub fn level_data_needs_recovery(world: &Path) -> Option<DatIssue> {
-    match level_dat_issue(world, false)? {
-        DatIssue::Missing if !world.join("level.dat_old").exists() => None,
-        issue => Some(issue),
-    }
-}
+use horizon_world::level_dat::try_read_dat;
+pub use horizon_world::level_dat::{
+    DatIssue, level_dat_issue, level_data_needs_recovery, read_dat,
+};
 /// `LevelStorageAccess.restoreLevelDataFromOld` (`Util.safeReplaceOrMoveFile`):
 /// level.dat moves aside to `level.dat_corrupted_<time>` and level.dat_old
 /// takes its place. Whether it worked. Vanilla passes `noRollback` and reports

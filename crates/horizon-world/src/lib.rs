@@ -80,6 +80,7 @@ pub mod java_hash_map;
 pub mod json_folder;
 pub mod lazy_json;
 pub mod level;
+pub mod level_dat;
 pub mod liquid_collision;
 pub mod live_attribute_updates;
 pub mod living_air;
