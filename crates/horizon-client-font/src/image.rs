@@ -1,5 +1,9 @@
 //! Horizon's PNG reader shared by font loading and the HUD atlas.
-use std::path::Path;
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use horizon_client_core::Result;
 
@@ -48,4 +52,67 @@ pub fn decode_bytes(data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
         });
     }
     Ok((info.width, info.height, rgba))
+}
+
+/// The variant images (and `overlays`) the atlas packs: every variant before any overlay, by
+/// name, while their sizes add up to at most `budget` texels. A full budget drops glows before
+/// looks.
+pub fn budgeted<'a>(
+    files: impl Iterator<Item = &'a PathBuf>,
+    overlays: &HashSet<PathBuf>,
+    budget: u64,
+) -> HashSet<PathBuf> {
+    let mut files: Vec<&PathBuf> = files.collect();
+    files.sort_by_key(|p| (overlays.contains(*p), *p));
+    within_budget(&files, budget)
+}
+/// The `files` (in order) whose sizes add up to at most `budget` texels.
+pub fn within_budget(files: &[&PathBuf], budget: u64) -> HashSet<PathBuf> {
+    let mut texels = 0u64;
+    files
+        .iter()
+        .filter(|p| {
+            let (w, h) = png_size(p).unwrap_or((0, 0));
+            texels += u64::from(w) * u64::from(h);
+            texels <= budget
+        })
+        .map(|p| (*p).clone())
+        .collect()
+}
+/// A PNG's width and height from its first 24 bytes (`IHDR`), before any
+/// pixel buffer is made.
+pub fn png_bytes_size(data: &[u8]) -> Option<(u32, u32)> {
+    let header = data.get(..24)?;
+    if header[..8] != *b"\x89PNG\r\n\x1a\n" || header[12..16] != *b"IHDR" {
+        return None;
+    }
+    let field = |at: usize| u32::from_be_bytes(header[at..at + 4].try_into().unwrap_or_default());
+    Some((field(16), field(20)))
+}
+/// A PNG's width and height, from its header alone.
+pub fn png_size(path: &Path) -> Option<(u32, u32)> {
+    png_bytes_size(&horizon_core::prepared_files::read_head(path, 24).ok()?)
+}
+pub fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    // A prepared root's folder: from its data file, without listing the disk.
+    if let Some(files) = horizon_core::prepared_files::files_under(dir) {
+        out.extend(
+            files
+                .iter()
+                .filter(|file| file.ends_with(".png"))
+                .map(|file| dir.join(file)),
+        );
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk(&path, out);
+        } else if path.extension().is_some_and(|e| e == "png") {
+            out.push(path);
+        }
+    }
 }
