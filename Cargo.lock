@@ -1395,6 +1395,7 @@ dependencies = [
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-telemetry",
+ "horizon-terrain-mesh",
  "horizon-theme",
  "horizon-threads",
  "horizon-world",

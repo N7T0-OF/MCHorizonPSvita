@@ -7,9 +7,8 @@ use horizon_client::command::args::GameMode;
 use horizon_client::gamepad::{Button, PadState};
 use horizon_client::held::Source;
 use horizon_client::motion::PlayerMotion;
-use horizon_client_platform::KeyCode;
+use horizon_client_platform::{KeyCode, MouseButton};
 use horizon_core::geometry::Vec3;
-use winit::event::MouseButton;
 
 /// A game at play with no world: input reaches the mappings, as in `Screen::Playing`.
 fn playing(test: impl FnOnce(&mut Game)) {

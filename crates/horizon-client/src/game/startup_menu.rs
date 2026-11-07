@@ -447,7 +447,7 @@ impl Loading {
     }
     pub(super) fn apply_menu_settings(&mut self) {
         if let Some(renderer) = &mut self.renderer {
-            renderer.gamma = self.settings.gamma;
+            horizon_client::presentation::set_gamma(renderer, self.settings.gamma);
             horizon_client::presentation::set_present_mode(
                 renderer,
                 self.settings.vsync,
@@ -496,9 +496,9 @@ impl Loading {
     }
 
     fn menu_size(&self) -> [u32; 2] {
-        self.renderer
-            .as_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height])
+        self.renderer.as_ref().map_or([1280, 720], |r| {
+            horizon_client::presentation::viewport_size(r)
+        })
     }
 
     fn save_menu_address(&mut self) {
@@ -1078,10 +1078,9 @@ impl Loading {
                 if self.menu.options_open && self.menu.dragging {
                     self.menu_options_click(true, false);
                 } else if let Some(title) = &mut self.menu.title {
-                    let size = self
-                        .renderer
-                        .as_ref()
-                        .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+                    let size = self.renderer.as_ref().map_or([1280, 720], |r| {
+                        horizon_client::presentation::viewport_size(r)
+                    });
                     let b = HudBatch::new(size);
                     title.drag(self.menu.cursor, (b.width, b.height));
                     title.drag_field(&self.gui.as_ref().unwrap().atlas, self.menu.cursor.0);
@@ -1388,6 +1387,12 @@ mod tests {
 
     #[test]
     fn menu_is_usable_while_the_core_worker_is_blocked() {
+        struct LoopControl(std::cell::Cell<EventLoopControl>);
+        impl EventLoopCtl for LoopControl {
+            fn set_control_flow(&self, control: EventLoopControl) {
+                self.0.set(control);
+            }
+        }
         let root = std::env::temp_dir().join("horizon-startup-menu-no-world-resources");
         let (sender, receiver) = std::sync::mpsc::channel();
         let (release, wait) = std::sync::mpsc::channel();
@@ -1419,7 +1424,24 @@ mod tests {
             focus: 0,
             options: Default::default(),
         };
-        title.type_text("My world");
+        let control = LoopControl(std::cell::Cell::new(EventLoopControl::Poll));
+        loading.dispatch_platform_window_event(
+            &control,
+            WindowEvent::KeyboardInput {
+                event: horizon_client_platform::KeyboardEvent {
+                    physical_key: None,
+                    logical_key: horizon_client_platform::LogicalKey::Character("My world".into()),
+                    location: horizon_client_platform::KeyLocation::Standard,
+                    state: horizon_client_platform::KeyState::Pressed,
+                    logical_text: Some("My world".into()),
+                    text: Some("My world".into()),
+                    unmodified_text: Some("My world".into()),
+                    repeat: false,
+                },
+                is_synthetic: false,
+            },
+        );
+        assert_eq!(control.0.get(), EventLoopControl::Poll);
         loading.set_ui(gui(&root), root);
         let action = loading.menu.title.as_ref().unwrap().create_action();
         loading.menu.queue_entry(action, "Player".into());

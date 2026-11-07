@@ -21638,21 +21638,18 @@ fn build_renderer(
         wide_frame,
         shader_pack,
     ))?;
-    renderer.hud.sprite_animations = atlas
-        .sprite_animations
-        .iter()
-        .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
-        .collect();
-    renderer
-        .hud
-        .set_text_shader(&renderer.device, atlas.text_shader.as_deref());
-    pack.item_renderer
-        .prepare_glint_atlas(renderer.device.limits().max_texture_dimension_2d, filtering)?;
-    renderer.set_lines_shader(atlas.lines_shader.as_deref());
+    horizon_client::presentation::set_hud_sprite_animations(
+        &mut renderer,
+        &atlas.sprite_animations,
+    );
+    horizon_client::presentation::set_hud_text_shader(&mut renderer, atlas.text_shader.as_deref());
+    pack.item_renderer.prepare_glint_atlas(
+        horizon_client::presentation::max_texture_dimension_2d(&renderer),
+        filtering,
+    )?;
+    horizon_client::presentation::set_lines_shader(&mut renderer, atlas.lines_shader.as_deref());
     let cit_glints = pack.item_renderer.cit.as_ref().map(|c| &c.glint_textures);
-    renderer
-        .hud
-        .set_cit_glints(&renderer.device, &renderer.queue, cit_glints);
+    horizon_client::presentation::set_hud_cit_glints(&mut renderer, cit_glints);
     Ok(renderer)
 }
 
@@ -21710,11 +21707,10 @@ fn loading_renderer(
         false,
     ))?;
     if let Some(atlas) = atlas {
-        renderer.hud.sprite_animations = atlas
-            .sprite_animations
-            .iter()
-            .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
-            .collect();
+        horizon_client::presentation::set_hud_sprite_animations(
+            &mut renderer,
+            &atlas.sprite_animations,
+        );
     }
     Ok(renderer)
 }
@@ -22173,18 +22169,25 @@ impl Loading {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
         }
-        let Some(mut event) = horizon_client_input::winit_adapter::from_winit_window_event(&event)
+        let Some(event) = horizon_client_input::winit_adapter::from_winit_window_event(&event)
         else {
             return;
         };
+        self.dispatch_platform_window_event(&WinitEventLoop::new(event_loop), event);
+    }
+    /// Dispatch a native window event through Horizon's existing startup menu.
+    fn dispatch_platform_window_event(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
+        mut event: WindowEvent,
+    ) {
         follow_keymap(&mut event);
         let keyboard = match &event {
             WindowEvent::KeyboardInput { event, .. } => Some(event.clone()),
             _ => None,
         };
         let key = keyboard.as_ref().and_then(|event| event.physical_key);
-        if let Err(error) = self.menu_event(&WinitEventLoop::new(event_loop), event, key, keyboard)
-        {
+        if let Err(error) = self.menu_event(event_loop, event, key, keyboard) {
             self.error = Some(error);
             event_loop.exit();
         }
@@ -22227,24 +22230,32 @@ impl Loading {
         // The title frame's wait starts once its renderer is built.
         self.ui_at = Some(Instant::now());
     }
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    /// Advance the original resource loader and menu services once.
+    fn poll_platform(&mut self, event_loop: &dyn EventLoopCtl) -> bool {
         // The loop may run once more after exit(): keep the first error, the
         // one that ended loading.
         if self.error.is_some() {
             event_loop.exit();
-            return;
+            return false;
         }
         if horizon_threads::stop_requests() > 0 {
             // No world is open yet: nothing to save.
             event_loop.exit();
-            return;
+            return false;
         }
         if let Err(error) = self.poll_menu_resources() {
             self.error = Some(error);
             event_loop.exit();
+            return false;
+        }
+        self.poll_menu_realms(event_loop);
+        true
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let control = WinitEventLoop::new(event_loop);
+        if !self.poll_platform(&control) {
             return;
         }
-        self.poll_menu_realms(&WinitEventLoop::new(event_loop));
         if let Some(w) = &self.window {
             if self.options.as_ref().is_some_and(|o| o.offscreen) {
                 self.draw();
@@ -22252,13 +22263,13 @@ impl Loading {
                 w.request_redraw();
             }
         }
-        EventLoopCtl::set_control_flow(&WinitEventLoop::new(event_loop), EventLoopControl::Poll);
+        control.set_control_flow(EventLoopControl::Poll);
     }
     fn draw(&mut self) {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| horizon_client::presentation::viewport_size(r))
         else {
             return;
         };

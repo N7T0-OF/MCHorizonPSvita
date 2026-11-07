@@ -10,7 +10,9 @@ use crate::{
     chunk::ColumnLayout,
     gfx::{Frame, SectionKey},
     graphics::PresentMode,
+    hud::{Rect, cit_glint::GlintTextures},
     mesher::SectionMesh,
+    sprites::SpriteAnimation,
 };
 
 mod desktop;
@@ -26,6 +28,16 @@ pub trait PresentationBackend {
     fn release_surface(&mut self);
     fn recreate_surface(&mut self) -> Result<()>;
     fn set_present_mode(&mut self, vsync: bool, mode: PresentMode);
+    fn set_gamma(&mut self, gamma: f32);
+}
+
+/// CPU-supplied HUD resources and the texture limit needed when preparing them.
+pub trait HudBackend {
+    fn set_hud_sprite_animations(&mut self, animations: &[(Rect, SpriteAnimation)]);
+    fn set_hud_text_shader(&mut self, shader: Option<&horizon_shaders::CoreProgram>);
+    fn set_hud_cit_glints(&mut self, textures: Option<&GlintTextures>);
+    fn set_lines_shader(&mut self, shader: Option<&horizon_shaders::CoreProgram>);
+    fn max_texture_dimension_2d(&self) -> u32;
 }
 
 /// Dynamic chunk-mesh lifecycle. Upload replaces the mesh for a section; a
@@ -63,6 +75,39 @@ pub fn recreate_surface(backend: &mut dyn PresentationBackend) -> Result<()> {
 
 pub fn set_present_mode(backend: &mut dyn PresentationBackend, vsync: bool, mode: PresentMode) {
     backend.set_present_mode(vsync, mode);
+}
+
+pub fn set_gamma(backend: &mut dyn PresentationBackend, gamma: f32) {
+    backend.set_gamma(gamma);
+}
+
+pub fn set_hud_sprite_animations(
+    backend: &mut dyn HudBackend,
+    animations: &[(Rect, SpriteAnimation)],
+) {
+    backend.set_hud_sprite_animations(animations);
+}
+
+pub fn set_hud_text_shader(
+    backend: &mut dyn HudBackend,
+    shader: Option<&horizon_shaders::CoreProgram>,
+) {
+    backend.set_hud_text_shader(shader);
+}
+
+pub fn set_hud_cit_glints(backend: &mut dyn HudBackend, textures: Option<&GlintTextures>) {
+    backend.set_hud_cit_glints(textures);
+}
+
+pub fn set_lines_shader(
+    backend: &mut dyn HudBackend,
+    shader: Option<&horizon_shaders::CoreProgram>,
+) {
+    backend.set_lines_shader(shader);
+}
+
+pub fn max_texture_dimension_2d(backend: &dyn HudBackend) -> u32 {
+    backend.max_texture_dimension_2d()
 }
 
 /// Upload one worker-produced section mesh through the selected terrain backend.
@@ -156,6 +201,7 @@ mod tests {
         size: [u32; 2],
         released: bool,
         present_mode: Option<(bool, PresentMode)>,
+        gamma: f32,
     }
 
     impl PresentationBackend for FakeSurface {
@@ -183,6 +229,10 @@ mod tests {
         fn set_present_mode(&mut self, vsync: bool, mode: PresentMode) {
             self.present_mode = Some((vsync, mode));
         }
+
+        fn set_gamma(&mut self, gamma: f32) {
+            self.gamma = gamma;
+        }
     }
 
     #[test]
@@ -196,5 +246,7 @@ mod tests {
         assert!(backend.released);
         backend.recreate_surface().unwrap();
         assert!(!backend.released);
+        set_gamma(&mut backend, 0.5);
+        assert_eq!(backend.gamma, 0.5);
     }
 }
