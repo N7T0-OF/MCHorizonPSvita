@@ -569,7 +569,11 @@ impl Region {
 }
 /// A value no font has had yet (`Font::epoch`).
 fn next_generation() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    #[cfg(not(target_has_atomic = "64"))]
+    use portable_atomic::AtomicU64;
+    #[cfg(target_has_atomic = "64")]
+    use std::sync::atomic::AtomicU64;
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 impl Font {

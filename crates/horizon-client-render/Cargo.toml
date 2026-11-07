@@ -13,6 +13,7 @@ lz4_flex = { version = "0.14", default-features = false, features = ["std", "saf
 horizon-assets = { path = "../horizon-assets" }
 horizon-bench = { path = "../horizon-bench" }
 horizon-client-core = { path = "../horizon-client-core" }
+horizon-client-font = { path = "../horizon-client-font" }
 horizon-client-input = { path = "../horizon-client-input" }
 horizon-client-platform = { path = "../horizon-client-platform" }
 horizon-command = { path = "../horizon-command" }
@@ -34,7 +35,6 @@ horizon-telemetry = { path = "../horizon-telemetry", default-features = false, f
 horizon-theme = { path = "../horizon-theme" }
 horizon-threads = { path = "../horizon-threads" }
 horizon-world = { path = "../horizon-world" }
-ab_glyph = "0.2.32"
 base64 = "0.22"
 bytemuck = { version = "1.24", features = ["derive"] }
 # Sound (ALSA on Linux); the `audio` feature.
@@ -58,7 +58,6 @@ sha1 = "0.10"
 sha2 = "0.10.9"
 smallvec = { version = "1", features = ["const_new"] }
 symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis"] }
-unicode-bidi = "0.3.18"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "naga-ir"] }
 winit = "0.30.13"

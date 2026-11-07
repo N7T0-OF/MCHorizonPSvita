@@ -1431,6 +1431,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-client-font"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "horizon-client-core",
+ "horizon-core",
+ "horizon-hud-data",
+ "horizon-resource-zip",
+ "horizon-theme",
+ "log",
+ "png",
+ "portable-atomic",
+ "serde_json",
+ "unicode-bidi",
+]
+
+[[package]]
 name = "horizon-client-input"
 version = "0.1.0"
 dependencies = [
@@ -1518,7 +1535,6 @@ dependencies = [
 name = "horizon-client-render"
 version = "0.1.0"
 dependencies = [
- "ab_glyph",
  "base64",
  "bytemuck",
  "chrono",
@@ -1529,6 +1545,7 @@ dependencies = [
  "horizon-assets",
  "horizon-bench",
  "horizon-client-core",
+ "horizon-client-font",
  "horizon-client-input",
  "horizon-client-platform",
  "horizon-command",
@@ -1563,7 +1580,6 @@ dependencies = [
  "sha2",
  "smallvec",
  "symphonia",
- "unicode-bidi",
  "ureq",
  "wgpu",
  "winit",
