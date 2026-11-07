@@ -7,6 +7,7 @@ pub mod image;
 pub mod pad_art;
 pub mod pad_cursor;
 pub mod title_edition;
+pub mod trim_slots;
 
 use horizon_client_core::{lang, text};
 use horizon_core::fast_hash;
