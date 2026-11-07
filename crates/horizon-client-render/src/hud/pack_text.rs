@@ -2,81 +2,12 @@
 //! with `IS_GUI`): servers' HUDs that their pack's vertex shader moves to the screen's corners,
 //! and text effects in its fragment shader. Without one the text draws natively.
 
-use std::path::Path;
-use std::sync::Arc;
-
-use horizon_shaders::{CoreProgram, Glue};
-
 use super::{HudBatch, HudVertex};
 
 mod desktop;
 pub(super) use desktop::PackText;
 
-/// GUI text's vertex format (`POSITION_TEX_COLOR`) from the HUD's vertices. A glyph is two
-/// triangles here, its corners top left, top right, bottom right, top left, bottom right, bottom
-/// left; vanilla's quads go top left, bottom left, bottom right, top right, which is what
-/// `gl_VertexID % 4` tells a pack's shader. The draw passes its first vertex as its instance.
-const GLUE: Glue = Glue {
-    inputs: &[("Position", "vec3"), ("Color", "vec4"), ("UV0", "vec2")],
-    prelude: "layout(location = 0) in vec2 hz_pos;\n\
-              layout(location = 1) in vec2 hz_uv;\n\
-              layout(location = 2) in vec4 hz_color;\n\
-              const int hz_corner[6] = int[6](0, 3, 2, 0, 2, 1);\n\
-              int hz_vertex_id() {\n\
-                  int i = int(gl_VertexIndex) - int(gl_InstanceIndex);\n\
-                  return i / 6 * 4 + hz_corner[i % 6];\n\
-              }",
-    setup: "Position = vec3(hz_pos, 0.0); Color = hz_color; UV0 = hz_uv;",
-    // GL's clip depth runs from -w to w, wgpu's from 0 to w; GUI text has no depth test.
-    finish: "gl_Position.z = 0.5 * gl_Position.w;",
-    vertex_id: "hz_vertex_id()",
-};
-
-/// The packs' text shader, when a pack replaces either stage.
-pub(super) fn load(root: &Path, defaults: &Path) -> Option<Arc<CoreProgram>> {
-    load_core(root, defaults, "text", &["IS_GUI"], &GLUE)
-}
-
-/// The packs' core shader `name` (`shaders/core/<name>.vsh` and `.fsh`) over `defaults` (the
-/// game's own resources, which have vanilla's and its includes), when a pack replaces either
-/// stage.
-pub(super) fn load_core(
-    root: &Path,
-    defaults: &Path,
-    name: &str,
-    defines: &[&str],
-    glue: &Glue,
-) -> Option<Arc<CoreProgram>> {
-    if root == defaults {
-        return None;
-    }
-    let read = |base: &Path, path: &str| std::fs::read_to_string(base.join(path)).ok();
-    let own =
-        |path: &str| read(root, path).filter(|text| read(defaults, path).as_ref() != Some(text));
-    let vertex_path = format!("assets/minecraft/shaders/core/{name}.vsh");
-    let fragment_path = format!("assets/minecraft/shaders/core/{name}.fsh");
-    let (own_vertex, own_fragment) = (own(&vertex_path), own(&fragment_path));
-    if own_vertex.is_none() && own_fragment.is_none() {
-        return None;
-    }
-    let vertex = own_vertex.or_else(|| read(defaults, &vertex_path))?;
-    let fragment = own_fragment.or_else(|| read(defaults, &fragment_path))?;
-    let include = |id: &str| {
-        let (namespace, path) = id.split_once(':')?;
-        let path = format!("assets/{namespace}/{path}");
-        read(root, &path).or_else(|| read(defaults, &path))
-    };
-    match horizon_shaders::translate_core(&vertex, &fragment, defines, &include, glue) {
-        Ok(program) => {
-            log::info!("the resource pack's {name} shader is used");
-            Some(Arc::new(program))
-        }
-        Err(e) => {
-            log::warn!("the resource pack's {name} shader is not used: {e}");
-            None
-        }
-    }
-}
+pub(super) use horizon_shaders::pack_text::{load, load_core};
 
 /// The std140 blocks: `Globals` (`GlobalSettingsUniform.update`: the camera at the origin,
 /// `GlintAlpha`, `GameTime`, `ScreenSize`), `Projection` (`GuiRenderer`'s orthographic GUI

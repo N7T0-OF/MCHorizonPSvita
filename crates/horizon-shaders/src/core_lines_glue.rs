@@ -1,10 +1,10 @@
 //! Shared shader translation description for resource-pack block outlines.
-use horizon_shaders::Glue;
+use crate::Glue;
 
 /// The outline's edges (`pack_lines::layout`: start, end, ARGB colour and width per instance) as
 /// vanilla's lines: four vertices an edge, the start twice and the end twice, the side
 /// `gl_VertexIndex % 2`, as `vs_line` draws them.
-pub(crate) const GLUE: Glue = Glue {
+pub const GLUE: Glue = Glue {
     inputs: &[
         ("Position", "vec3"),
         ("Color", "vec4"),

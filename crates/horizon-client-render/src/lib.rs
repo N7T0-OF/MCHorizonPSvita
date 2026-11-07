@@ -32,7 +32,7 @@ pub mod collisions;
 pub mod command_block;
 pub mod containers;
 pub mod controller_ui;
-pub(crate) mod core_lines_glue;
+pub(crate) use horizon_shaders::core_lines_glue;
 pub mod crash;
 pub mod datapack;
 pub mod dynamic_light;
