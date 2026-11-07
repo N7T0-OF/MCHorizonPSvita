@@ -235,7 +235,10 @@ impl StartupMenu {
             self.modifiers.control_key()
         };
         clipboard::edit_shortcut(
-            clipboard::shortcut_letter(&event.logical_key, event.physical_key),
+            horizon_client_input::winit_adapter::shortcut_letter_from_winit(
+                &event.logical_key,
+                event.physical_key,
+            ),
             edit,
             self.modifiers.shift_key(),
             self.modifiers.alt_key(),
@@ -457,10 +460,10 @@ impl Loading {
             let monitor = window
                 .current_monitor()
                 .or_else(|| window.primary_monitor());
-            if let Some(modes) = self
-                .video_modes
-                .refresh(monitor, horizon_client::window::monitor_video_modes)
-            {
+            if let Some(modes) = self.video_modes.refresh(
+                monitor,
+                horizon_client_input::desktop_adapter::monitor_video_modes,
+            ) {
                 self.settings.video_modes = modes;
             }
             let preferred = self
@@ -666,7 +669,10 @@ impl Loading {
 
     /// `Game::narrator_hotkey` on the startup menu's screens.
     fn menu_narrator_hotkey(&mut self, event: &KeyEvent) {
-        let letter = clipboard::shortcut_letter(&event.logical_key, event.physical_key);
+        let letter = horizon_client_input::winit_adapter::shortcut_letter_from_winit(
+            &event.logical_key,
+            event.physical_key,
+        );
         if letter != Some('b') {
             return;
         }

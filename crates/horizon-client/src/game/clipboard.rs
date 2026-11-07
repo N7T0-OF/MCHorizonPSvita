@@ -15,7 +15,10 @@ impl Game<'_> {
         let m = self.modifiers;
         let held = |keys: [KeyCode; 2]| keys.iter().any(|k| self.keys.raw(k));
         clipboard::edit_shortcut(
-            clipboard::shortcut_letter(&event.logical_key, event.physical_key),
+            horizon_client_input::winit_adapter::shortcut_letter_from_winit(
+                &event.logical_key,
+                event.physical_key,
+            ),
             self.has_control_down_with_quirk(),
             m.shift_key() || held([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
             m.alt_key() || held([KeyCode::AltLeft, KeyCode::AltRight]),

@@ -2587,7 +2587,7 @@ struct Game<'a> {
     /// The window's fullscreen request and reported state.
     fullscreen: horizon_client::window::FullscreenState,
     /// The monitor whose video modes `settings.video_modes` holds.
-    video_modes: horizon_client::window::VideoModeList,
+    video_modes: horizon_client::window::VideoModeList<winit::monitor::MonitorHandle>,
     /// MouseHandler's accumulated look and wheel state.
     mouse: MouseLook,
     /// An agent moved the mouse (`mouse-move`) since the pointer was last
@@ -17854,7 +17854,7 @@ impl ApplicationHandler for Game<'_> {
         self.fullscreen = horizon_client::window::FullscreenState::new(fullscreen);
         let attributes = Window::default_attributes()
             .with_title("Horizon")
-            .with_window_icon(horizon_client::window::icon());
+            .with_window_icon(horizon_client_input::desktop_adapter::icon());
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
@@ -21985,7 +21985,7 @@ struct Loading {
     gui: Option<UiResources>,
     settings: Settings,
     fullscreen: horizon_client::window::FullscreenState,
-    video_modes: horizon_client::window::VideoModeList,
+    video_modes: horizon_client::window::VideoModeList<winit::monitor::MonitorHandle>,
     options: Option<Options>,
     vanilla_root: PathBuf,
     pack_error: Option<String>,
@@ -22033,7 +22033,7 @@ impl Loading {
         self.fullscreen = horizon_client::window::FullscreenState::new(fullscreen);
         let attributes = Window::default_attributes()
             .with_title("Horizon")
-            .with_window_icon(horizon_client::window::icon());
+            .with_window_icon(horizon_client_input::desktop_adapter::icon());
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(

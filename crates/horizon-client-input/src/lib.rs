@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 pub mod actions;
 pub mod clipboard;
+#[cfg(feature = "desktop")]
+pub mod desktop_adapter;
 pub mod gamepad;
 pub mod held;
 pub mod input;
@@ -16,4 +18,5 @@ pub mod modifiers;
 pub mod mouse;
 pub mod snap;
 pub mod window;
+#[cfg(feature = "desktop")]
 pub mod winit_adapter;

@@ -3,7 +3,7 @@
 //! `isCopy`, `isPaste` and `isCut`, `StringUtil.filterText` and
 //! `ChatFormatting.stripFormatting`.
 
-use winit::keyboard::{Key, KeyCode, PhysicalKey};
+use horizon_client_platform::KeyCode;
 
 /// A text-editing shortcut (`InputWithModifiers.isSelectAll`, `isCopy`,
 /// `isPaste`, `isCut`).
@@ -18,8 +18,8 @@ pub enum EditShortcut {
 /// The letter a key stands for in shortcuts (`KeyEvent.shortcutKey`, SDL's
 /// keycode): the layout's letter, or the key's US-layout letter when the
 /// layout's is not a Latin one (SDL's default `latin_letters` keycode option).
-pub fn shortcut_letter(logical: &Key, physical: PhysicalKey) -> Option<char> {
-    if let Key::Character(s) = logical {
+pub fn shortcut_letter(physical: KeyCode, logical_text: Option<&str>) -> Option<char> {
+    if let Some(s) = logical_text {
         let mut chars = s.chars();
         if let (Some(c), None) = (chars.next(), chars.next())
             && c.is_ascii_alphabetic()
@@ -27,10 +27,7 @@ pub fn shortcut_letter(logical: &Key, physical: PhysicalKey) -> Option<char> {
             return Some(c.to_ascii_lowercase());
         }
     }
-    let PhysicalKey::Code(code) = physical else {
-        return None;
-    };
-    Some(match code {
+    Some(match physical {
         KeyCode::KeyA => 'a',
         KeyCode::KeyC => 'c',
         KeyCode::KeyV => 'v',
@@ -124,12 +121,14 @@ pub trait Clipboard {
 /// without it. When no system clipboard can be reached, text copied in the
 /// game can still be pasted in the game.
 #[derive(Default)]
+#[cfg(feature = "desktop")]
 pub struct SystemClipboard {
     system: Option<arboard::Clipboard>,
     /// The text Horizon last copied (`horizon-ctl status`).
     copied: Option<String>,
 }
 
+#[cfg(feature = "desktop")]
 impl SystemClipboard {
     /// The text last copied by the game.
     pub fn copied(&self) -> Option<&str> {
@@ -143,6 +142,7 @@ impl SystemClipboard {
     }
 }
 
+#[cfg(feature = "desktop")]
 impl Clipboard for SystemClipboard {
     fn get(&mut self) -> String {
         let Some(system) = self.system() else {
@@ -359,13 +359,14 @@ mod tests {
 
     #[test]
     fn the_layout_letter_decides_and_non_latin_layouts_use_the_position() {
-        let q = PhysicalKey::Code(KeyCode::KeyQ);
+        use horizon_client_platform::KeyCode;
         // AZERTY: the key at Q's position types an A.
-        assert_eq!(shortcut_letter(&Key::Character("a".into()), q), Some('a'));
+        assert_eq!(shortcut_letter(KeyCode::KeyQ, Some("a")), Some('a'));
         // Russian: the key at C's position types с.
-        let c = PhysicalKey::Code(KeyCode::KeyC);
-        assert_eq!(shortcut_letter(&Key::Character("с".into()), c), Some('c'));
-        assert_eq!(shortcut_letter(&Key::Character("C".into()), q), Some('c'));
+        assert_eq!(shortcut_letter(KeyCode::KeyC, Some("с")), Some('c'));
+        assert_eq!(shortcut_letter(KeyCode::KeyQ, Some("C")), Some('c'));
+        assert_eq!(shortcut_letter(KeyCode::KeyV, None), Some('v'));
+        assert_eq!(shortcut_letter(KeyCode::KeyQ, None), None);
     }
 
     #[test]

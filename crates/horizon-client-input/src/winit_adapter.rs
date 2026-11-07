@@ -2,7 +2,10 @@
 //! `horizon-client-platform`; Winit is translated here at the window boundary.
 
 use horizon_client_platform::{KeyCode, Modifiers, MouseButton};
-use winit::{event::MouseButton as WinitMouseButton, keyboard::KeyCode as WinitKeyCode};
+use winit::{
+    event::MouseButton as WinitMouseButton,
+    keyboard::{Key as WinitKey, KeyCode as WinitKeyCode, PhysicalKey},
+};
 
 macro_rules! key_codes {
     ($($key:ident),+ $(,)?) => {
@@ -170,6 +173,20 @@ key_codes!(
     Undo,
 );
 
+/// Translate a Winit key event's logical text and physical position to the
+/// platform-neutral edit-shortcut letter used by Horizon.
+pub fn shortcut_letter_from_winit(logical: &WinitKey, physical: PhysicalKey) -> Option<char> {
+    let logical_text = match logical {
+        WinitKey::Character(text) => Some(text.as_ref()),
+        _ => None,
+    };
+    let physical = match physical {
+        PhysicalKey::Code(code) => from_winit_key(code).unwrap_or(KeyCode::Other),
+        PhysicalKey::Unidentified(_) => KeyCode::Other,
+    };
+    crate::clipboard::shortcut_letter(physical, logical_text)
+}
+
 pub fn from_winit_mouse(button: WinitMouseButton) -> MouseButton {
     match button {
         WinitMouseButton::Left => MouseButton::Left,
@@ -213,6 +230,33 @@ mod tests {
             Some(WinitKeyCode::ArrowLeft)
         );
         assert_eq!(from_winit_key(WinitKeyCode::Fn), None);
+    }
+
+    #[test]
+    fn shortcut_mapping_prefers_logical_text_then_falls_back_to_position() {
+        use winit::keyboard::Key;
+
+        assert_eq!(
+            shortcut_letter_from_winit(
+                &Key::Character("a".into()),
+                PhysicalKey::Code(WinitKeyCode::KeyQ),
+            ),
+            Some('a')
+        );
+        assert_eq!(
+            shortcut_letter_from_winit(
+                &Key::Character("с".into()),
+                PhysicalKey::Code(WinitKeyCode::KeyC),
+            ),
+            Some('c')
+        );
+        assert_eq!(
+            shortcut_letter_from_winit(
+                &Key::Unidentified(winit::keyboard::NativeKey::Unidentified),
+                PhysicalKey::Code(WinitKeyCode::KeyV),
+            ),
+            Some('v')
+        );
     }
 
     #[test]

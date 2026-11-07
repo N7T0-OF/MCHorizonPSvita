@@ -377,38 +377,6 @@ impl FullscreenState {
         }
     }
 
-    /// `Window.updateFullscreenIfChanged` with the exclusive option and preferred mode: asks the
-    /// window to enter, leave or change its fullscreen only when one of them changed.
-    /// `in_video_screen` holds a changed mode back until the Video Settings screen closes
-    /// (`changeFullscreenVideoMode`).
-    pub fn apply(
-        &mut self,
-        window: &winit::window::Window,
-        wanted: bool,
-        exclusive: bool,
-        preferred: Option<VideoMode>,
-        in_video_screen: bool,
-    ) {
-        let request = self.request(wanted);
-        let reapply = self.set_exclusive(exclusive);
-        self.set_preferred_mode(preferred);
-        let mode_change = !in_video_screen && self.take_mode_change();
-        match request {
-            Some(false) => window.set_fullscreen(None),
-            Some(true) => window.set_fullscreen(Some(fullscreen_request(
-                window,
-                exclusive,
-                preferred.as_ref(),
-            ))),
-            None if reapply || mode_change => window.set_fullscreen(Some(fullscreen_request(
-                window,
-                exclusive,
-                preferred.as_ref(),
-            ))),
-            None => {}
-        }
-    }
-
     /// `Window.setExclusiveFullscreen`: true when the option changed while fullscreen is
     /// requested, so the window has to enter the other kind of fullscreen at once.
     pub fn set_exclusive(&mut self, exclusive: bool) -> bool {
@@ -516,35 +484,13 @@ impl VideoMode {
     pub fn bits(&self) -> i32 {
         self.red_bits + self.green_bits + self.blue_bits
     }
-
-    /// A winit mode: its depth is the total, split evenly over the channels.
-    pub fn from_winit(mode: &winit::monitor::VideoModeHandle) -> Self {
-        let depth = i32::from(mode.bit_depth());
-        let size = mode.size();
-        Self {
-            width: size.width as i32,
-            height: size.height as i32,
-            red_bits: depth / 3,
-            green_bits: depth / 3,
-            blue_bits: depth - 2 * (depth / 3),
-            refresh_rate: mode.refresh_rate_millihertz() as f32 / 1000.0,
-        }
-    }
-}
-
-/// `Monitor.videoModes`: the modes a monitor offers.
-pub fn monitor_video_modes(monitor: &winit::monitor::MonitorHandle) -> Vec<VideoMode> {
-    monitor
-        .video_modes()
-        .map(|m| VideoMode::from_winit(&m))
-        .collect()
 }
 
 /// The video modes of the window's monitor, listed once per monitor. Listing them takes tens of
 /// milliseconds on Windows, and settings apply at every step of a dragged slider: listing them
 /// each time made the slider stutter.
 #[derive(Debug)]
-pub struct VideoModeList<M = winit::monitor::MonitorHandle> {
+pub struct VideoModeList<M = ()> {
     listed: Option<M>,
 }
 
@@ -571,62 +517,8 @@ impl<M: PartialEq> VideoModeList<M> {
     }
 }
 
-/// `Monitor.currentMode`: the monitor's desktop mode; winit has no such query, so the mode of
-/// the monitor's own size with the highest refresh rate and depth.
-fn monitor_current_mode(
-    monitor: &winit::monitor::MonitorHandle,
-) -> Option<winit::monitor::VideoModeHandle> {
-    let size = monitor.size();
-    monitor
-        .video_modes()
-        .filter(|m| m.size() == size)
-        .max_by_key(|m| (m.refresh_rate_millihertz(), m.bit_depth()))
-}
-
-/// `Window.applyFullscreen`: the fullscreen the window asks for. Exclusive fullscreen takes
-/// `Monitor.getPreferredVideoMode` (the preferred mode if the monitor has it, else the desktop
-/// mode); a monitor with no usable mode falls back to borderless, as vanilla does.
-pub fn fullscreen_request(
-    window: &winit::window::Window,
-    exclusive: bool,
-    preferred: Option<&VideoMode>,
-) -> winit::window::Fullscreen {
-    use winit::window::Fullscreen;
-    if !exclusive {
-        return Fullscreen::Borderless(None);
-    }
-    let Some(monitor) = window
-        .current_monitor()
-        .or_else(|| window.primary_monitor())
-    else {
-        return Fullscreen::Borderless(None);
-    };
-    let wanted = preferred.and_then(|p| {
-        monitor
-            .video_modes()
-            .find(|m| VideoMode::from_winit(m) == *p)
-    });
-    match wanted.or_else(|| monitor_current_mode(&monitor)) {
-        Some(mode) => Fullscreen::Exclusive(mode),
-        None => Fullscreen::Borderless(None),
-    }
-}
-
-/// Horizon's icon for the window's title bar and the task bar (X11 and Windows; Wayland takes
-/// it from the `horizon.desktop` entry, macOS from the app bundle). `None` if it can't be read.
-pub fn icon() -> Option<winit::window::Icon> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(horizon_theme::ICON_PNG));
-    decoder.ignore_checksums(true);
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().ok()?;
-    let mut bytes = vec![0; reader.output_buffer_size()?];
-    let info = reader.next_frame(&mut bytes).ok()?;
-    if info.color_type != png::ColorType::Rgba {
-        return None;
-    }
-    bytes.truncate(info.buffer_size());
-    winit::window::Icon::from_rgba(bytes, info.width, info.height).ok()
-}
+#[cfg(feature = "desktop")]
+pub use crate::desktop_adapter::{fullscreen_request, icon, monitor_video_modes};
 
 #[cfg(test)]
 mod tests {
@@ -662,11 +554,6 @@ mod tests {
         assert_eq!(mode.refresh_rate_label(), "59.94");
         assert_eq!(mode.bits(), 24);
     }
-    #[test]
-    fn the_window_icon_decodes() {
-        assert!(icon().is_some());
-    }
-
     #[test]
     fn exclusive_fullscreen_reapplies_only_while_fullscreen_is_requested() {
         let mut f = FullscreenState::new(false);

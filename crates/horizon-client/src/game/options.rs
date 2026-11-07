@@ -496,10 +496,10 @@ impl Game<'_> {
         }
         if let Some(w) = self.window.clone() {
             let monitor = w.current_monitor().or_else(|| w.primary_monitor());
-            if let Some(modes) = self
-                .video_modes
-                .refresh(monitor, horizon_client::window::monitor_video_modes)
-            {
+            if let Some(modes) = self.video_modes.refresh(
+                monitor,
+                horizon_client_input::desktop_adapter::monitor_video_modes,
+            ) {
                 self.settings.video_modes = modes;
             }
             let in_video_screen = self.screen == Screen::Options && self.ui.options.video_open();
