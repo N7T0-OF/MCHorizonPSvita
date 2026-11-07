@@ -3,6 +3,8 @@ project(horizon_wiiu_bootstrap C)
 
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 find_program(POWERPC_OBJCOPY_EXECUTABLE powerpc-eabi-objcopy REQUIRED)
+find_program(POWERPC_AR_EXECUTABLE powerpc-eabi-ar REQUIRED)
+find_program(POWERPC_NM_EXECUTABLE powerpc-eabi-nm REQUIRED)
 find_program(CAFEGLSL_COMPILER_EXECUTABLE glslcompiler REQUIRED)
 set(HORIZON_WIIU_CAPTURE_DIR "" CACHE PATH "Horizon render-capture directory; select worldgen or the diagnostic fixture when empty")
 set(HORIZON_WIIU_CAPTURE_MAX_VERTICES 65536 CACHE STRING "Maximum captured solid vertices converted for GX2")
@@ -115,19 +117,39 @@ if(HORIZON_WIIU_CAPTURE_DIR)
    )
 endif()
 
-add_executable(horizon_wiiu_bootstrap src/main.c ../platform/src/vpad_bridge.c "${GSH_OBJECT}" "${HORIZON_WIIU_CAPTURE_SOURCE}")
+set(WUT_CRT0_OBJECT "")
+if(HORIZON_WIIU_WORLDGEN)
+   set(WUT_CRT0_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/wut_crt0_rpx.o")
+   set(WORLDGEN_WUT_STATICLIB "${CMAKE_CURRENT_BINARY_DIR}/libhorizon_wiiu_worldgen_wut.a")
+   add_custom_command(
+      OUTPUT "${WUT_CRT0_OBJECT}" "${WORLDGEN_WUT_STATICLIB}"
+      COMMAND "${CMAKE_COMMAND}" -E env
+         "POWERPC_AR=${POWERPC_AR_EXECUTABLE}"
+         "POWERPC_NM=${POWERPC_NM_EXECUTABLE}"
+         "POWERPC_OBJCOPY=${POWERPC_OBJCOPY_EXECUTABLE}"
+         bash "${CMAKE_CURRENT_SOURCE_DIR}/prepare_wut_startup.sh"
+         "${HORIZON_WIIU_WORLDGEN_STATICLIB}" "$ENV{DEVKITPRO}/wut/lib/libwut.a"
+         "${WORLDGEN_WUT_STATICLIB}" "${WUT_CRT0_OBJECT}"
+      DEPENDS "${HORIZON_WIIU_WORLDGEN_STATICLIB}" "$ENV{DEVKITPRO}/wut/lib/libwut.a" prepare_wut_startup.sh
+      COMMENT "Selecting WUT startup for the Cafe std archive"
+      VERBATIM)
+   set_source_files_properties("${WUT_CRT0_OBJECT}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+   add_custom_target(horizon_wiiu_wut_startup DEPENDS "${WUT_CRT0_OBJECT}" "${WORLDGEN_WUT_STATICLIB}")
+endif()
+add_executable(horizon_wiiu_bootstrap "${WUT_CRT0_OBJECT}" src/main.c ../platform/src/vpad_bridge.c "${GSH_OBJECT}" "${HORIZON_WIIU_CAPTURE_SOURCE}")
 target_include_directories(horizon_wiiu_bootstrap PRIVATE ../platform/src)
 if(HORIZON_WIIU_CAPTURE_SOURCE)
    target_compile_definitions(horizon_wiiu_bootstrap PRIVATE HORIZON_WIIU_CAPTURE=1)
 endif()
 if(HORIZON_WIIU_WORLDGEN)
    add_library(horizon_wiiu_worldgen STATIC IMPORTED GLOBAL)
-   set_target_properties(horizon_wiiu_worldgen PROPERTIES IMPORTED_LOCATION "${HORIZON_WIIU_WORLDGEN_STATICLIB}")
+   set_target_properties(horizon_wiiu_worldgen PROPERTIES IMPORTED_LOCATION "${WORLDGEN_WUT_STATICLIB}")
    target_compile_definitions(horizon_wiiu_bootstrap PRIVATE
       HORIZON_WIIU_WORLDGEN=1
       HORIZON_WIIU_WORLD_PROFILE_SUPERFLAT=${HORIZON_WIIU_WORLD_PROFILE_SUPERFLAT}
       HORIZON_WIIU_WORLD_REGION_RADIUS=${HORIZON_WIIU_WORLD_REGION_RADIUS})
    target_link_options(horizon_wiiu_bootstrap PRIVATE "LINKER:--defsym=__end__=ADDR(.bss)+SIZEOF(.bss)")
+   add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_wut_startup)
 endif()
 add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_rust)
 add_dependencies(horizon_wiiu_bootstrap horizon_wiiu_shaders)
