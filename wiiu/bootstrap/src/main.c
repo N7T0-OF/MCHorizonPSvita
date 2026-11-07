@@ -16,6 +16,7 @@
 #include <vpad/input.h>
 #include <whb/gfx.h>
 #include <whb/proc.h>
+#include "vpad_bridge.h"
 
 extern void horizon_wiiu_frame_color(uint32_t frame, float rgba[4]);
 extern const uint8_t _binary_horizon_block_gsh_start[];
@@ -648,39 +649,38 @@ update_camera(void)
    const float previousCameraZ = sCameraZ;
    const float previousCameraYaw = sCameraYaw;
    const float previousCameraPitch = sCameraPitch;
-   VPADStatus status;
-   VPADReadError error = VPAD_READ_SUCCESS;
-   if (VPADRead(VPAD_CHAN_0, &status, 1, &error) <= 0 || error != VPAD_READ_SUCCESS) {
+   HorizonVpadSample status;
+   if (horizon_wiiu_vpad_read(&status) != 1) {
       return;
    }
 
    const float deadzone = 0.12f;
    float forward = 0.0f;
    float strafe = 0.0f;
-   if (status.leftStick.x > deadzone || status.leftStick.x < -deadzone) {
-      strafe += status.leftStick.x * 0.025f;
+   if (status.left_x > deadzone || status.left_x < -deadzone) {
+      strafe += status.left_x * 0.025f;
    }
-   if (status.leftStick.y > deadzone || status.leftStick.y < -deadzone) {
-      forward += status.leftStick.y * 0.025f;
+   if (status.left_y > deadzone || status.left_y < -deadzone) {
+      forward += status.left_y * 0.025f;
    }
-   if (status.hold & VPAD_BUTTON_LEFT) {
+   if (status.buttons & VPAD_BUTTON_LEFT) {
       strafe -= 0.025f;
    }
-   if (status.hold & VPAD_BUTTON_RIGHT) {
+   if (status.buttons & VPAD_BUTTON_RIGHT) {
       strafe += 0.025f;
    }
-   if (status.hold & VPAD_BUTTON_UP) {
+   if (status.buttons & VPAD_BUTTON_UP) {
       forward += 0.025f;
    }
-   if (status.hold & VPAD_BUTTON_DOWN) {
+   if (status.buttons & VPAD_BUTTON_DOWN) {
       forward -= 0.025f;
    }
 
-   if (status.rightStick.x > deadzone || status.rightStick.x < -deadzone) {
-      sCameraYaw += status.rightStick.x * 2.0f;
+   if (status.right_x > deadzone || status.right_x < -deadzone) {
+      sCameraYaw += status.right_x * 2.0f;
    }
-   if (status.rightStick.y > deadzone || status.rightStick.y < -deadzone) {
-      sCameraPitch -= status.rightStick.y * 2.0f;
+   if (status.right_y > deadzone || status.right_y < -deadzone) {
+      sCameraPitch -= status.right_y * 2.0f;
    }
    if (sCameraYaw >= 360.0f) sCameraYaw -= 360.0f;
    if (sCameraYaw < 0.0f) sCameraYaw += 360.0f;
@@ -703,8 +703,8 @@ update_camera(void)
    /* Renderer diagnostics use free-fly controls: A/B raise or lower the camera. */
    sCameraX = candidateCameraX;
    sCameraZ = candidateCameraZ;
-   if (status.hold & VPAD_BUTTON_A) sCameraY += 0.05f;
-   if (status.hold & VPAD_BUTTON_B) sCameraY -= 0.05f;
+   if (status.buttons & VPAD_BUTTON_A) sCameraY += 0.05f;
+   if (status.buttons & VPAD_BUTTON_B) sCameraY -= 0.05f;
 #ifdef HORIZON_WIIU_WORLDGEN
    stream_runtime_world_region();
 #endif
