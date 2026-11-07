@@ -1,5 +1,5 @@
 //! Reading and writing single NBT values the way vanilla's codecs accept them.
-use horizon_world::nbt::Tag;
+use crate::nbt::Tag;
 
 pub fn string(s: &str) -> Tag {
     Tag::String(s.into())

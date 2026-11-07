@@ -81,6 +81,7 @@ pub mod json_folder;
 pub mod lazy_json;
 pub mod level;
 pub mod level_dat;
+pub mod nbt_value;
 pub mod liquid_collision;
 pub mod live_attribute_updates;
 pub mod living_air;
@@ -130,6 +131,7 @@ pub mod view_direction;
 pub mod water_splash;
 pub mod weather;
 pub mod world_movement;
+pub mod world_preset;
 pub mod world_ray;
 pub mod worldgen;
 

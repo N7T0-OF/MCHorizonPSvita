@@ -3,7 +3,10 @@ use crate::{
     compression::Compression,
     nbt::{self, Limits, Tag},
 };
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub fn read_dat(path: &Path) -> Option<Tag> {
     try_read_dat(path).ok()
@@ -49,6 +52,36 @@ pub fn level_data_needs_recovery(world: &Path) -> Option<DatIssue> {
         DatIssue::Missing if !world.join("level.dat_old").exists() => None,
         issue => Some(issue),
     }
+}
+
+/// `SavedDataStorage`: `{data: ..., DataVersion}` under `data/minecraft/`.
+#[doc(hidden)]
+pub fn saved_data_path(world: &Path, name: &str) -> PathBuf {
+    world
+        .join("data")
+        .join("minecraft")
+        .join(format!("{name}.dat"))
+}
+#[doc(hidden)]
+pub fn read_saved_data(world: &Path, name: &str) -> Option<Tag> {
+    read_dat(&saved_data_path(world, name))?
+        .get("data")
+        .cloned()
+}
+/// The world's generator settings: world_gen_settings.dat (26.3) or
+/// level.dat's Data.WorldGenSettings.
+pub fn world_gen_settings(world: &Path) -> Option<Tag> {
+    // A world still to be file-fixed has them in level.dat in an older shape: they are read as
+    // the fixes would leave them, so the questions on opening it are the same ones.
+    if let Ok(Some(settings)) = crate::datafix::files::current_world_gen_settings(world) {
+        return Some(settings);
+    }
+    read_saved_data(world, "world_gen_settings").or_else(|| {
+        read_dat(&world.join("level.dat"))?
+            .get("Data")?
+            .get("WorldGenSettings")
+            .cloned()
+    })
 }
 
 #[cfg(test)]
