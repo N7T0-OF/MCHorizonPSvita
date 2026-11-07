@@ -1450,6 +1450,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-client-hud"
+version = "0.1.0"
+dependencies = [
+ "horizon-assets",
+ "horizon-client-core",
+ "horizon-client-font",
+ "horizon-core",
+ "horizon-hud-data",
+ "horizon-items",
+ "horizon-optifine",
+ "horizon-shaders",
+ "horizon-terrain-mesh",
+ "image-webp",
+ "log",
+ "lz4_flex",
+ "png",
+ "portable-atomic",
+ "serde_json",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "horizon-client-input"
 version = "0.1.0"
 dependencies = [
@@ -1548,6 +1570,7 @@ dependencies = [
  "horizon-bench",
  "horizon-client-core",
  "horizon-client-font",
+ "horizon-client-hud",
  "horizon-client-input",
  "horizon-client-platform",
  "horizon-command",

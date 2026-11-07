@@ -4,6 +4,11 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub mod minimap {
+    /// The minimap image's side in texels.
+    pub const SIZE: usize = 128;
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct HudVertex {

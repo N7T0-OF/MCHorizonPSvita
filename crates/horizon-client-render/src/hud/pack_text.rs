@@ -7,8 +7,6 @@ use super::{HudBatch, HudVertex};
 mod desktop;
 pub(super) use desktop::PackText;
 
-pub(super) use horizon_shaders::pack_text::{load, load_core};
-
 /// The std140 blocks: `Globals` (`GlobalSettingsUniform.update`: the camera at the origin,
 /// `GlintAlpha`, `GameTime`, `ScreenSize`), `Projection` (`GuiRenderer`'s orthographic GUI
 /// projection, 1000 to 11000 deep, in GL's depth range), `DynamicTransforms` (the GUI's model view
