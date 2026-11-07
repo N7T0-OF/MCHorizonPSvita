@@ -496,7 +496,7 @@ impl Loading {
     }
 
     fn menu_size(&self) -> [u32; 2] {
-        self.renderer.as_ref().map_or([1280, 720], |r| {
+        self.renderer.as_ref().map_or(self.viewport, |r| {
             horizon_client::presentation::viewport_size(r)
         })
     }
@@ -1022,6 +1022,7 @@ impl Loading {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
+                self.viewport = [size.width, size.height];
                 if let Some(r) = &mut self.renderer {
                     horizon_client::presentation::resize(r, size.width, size.height);
                 }
@@ -1077,10 +1078,11 @@ impl Loading {
                 self.update_menu_cursor();
                 if self.menu.options_open && self.menu.dragging {
                     self.menu_options_click(true, false);
-                } else if let Some(title) = &mut self.menu.title {
-                    let size = self.renderer.as_ref().map_or([1280, 720], |r| {
-                        horizon_client::presentation::viewport_size(r)
-                    });
+                } else {
+                    let size = self.menu_size();
+                    let Some(title) = &mut self.menu.title else {
+                        return Ok(());
+                    };
                     let b = HudBatch::new(size);
                     title.drag(self.menu.cursor, (b.width, b.height));
                     title.drag_field(&self.gui.as_ref().unwrap().atlas, self.menu.cursor.0);
@@ -1345,6 +1347,7 @@ mod tests {
         Loading {
             window: None,
             renderer: None,
+            viewport: [1280, 720],
             boot: horizon_client::hud::HudAtlas::boot(),
             gui: None,
             settings: Settings::default(),
@@ -1382,7 +1385,92 @@ mod tests {
         // A window never asked to redraw doesn't hold the start for long.
         loading.title_drawn = false;
         loading.ui_at = Instant::now().checked_sub(Duration::from_secs(2));
+        assert!(!loading.ready_for_handoff());
+        assert!(loading.ready_for_handoff_with_window(true));
+    }
+
+    #[test]
+    fn platform_presenter_receives_the_original_title_frame_before_handoff() {
+        struct LoopControl(std::cell::Cell<EventLoopControl>);
+        impl EventLoopCtl for LoopControl {
+            fn set_control_flow(&self, control: EventLoopControl) {
+                self.0.set(control);
+            }
+        }
+        struct Presenter {
+            accepts: bool,
+            vertices: usize,
+            title: bool,
+            size: [f32; 2],
+        }
+        impl horizon_client::presentation::PresentationBackend for Presenter {
+            fn viewport_size(&self) -> [u32; 2] {
+                [639, 479]
+            }
+            fn present_frame(&mut self, frame: &Frame<'_>) -> Result<bool> {
+                self.vertices = frame.hud.vertices.len();
+                self.title = frame.title;
+                self.size = [frame.hud.width, frame.hud.height];
+                Ok(self.accepts)
+            }
+            fn resize(&mut self, _: u32, _: u32) {}
+            fn release_surface(&mut self) {}
+            fn recreate_surface(&mut self) -> Result<()> {
+                Ok(())
+            }
+            fn set_present_mode(&mut self, _: bool, _: horizon_client::graphics::PresentMode) {}
+            fn set_gamma(&mut self, _: f32) {}
+        }
+
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut loading = loading(receiver);
+        let root = std::env::temp_dir().join("horizon-startup-menu-presenter-test");
+        loading.set_ui(gui(&root), root);
+        loading.loaded = Some(Err("loader failure".into()));
+        loading.ui_at = Instant::now().checked_sub(Duration::from_secs(2));
+        let mut presenter = Presenter {
+            accepts: false,
+            vertices: 0,
+            title: false,
+            size: [0.0; 2],
+        };
+        loading.draw_on(&mut presenter);
+        assert!(presenter.title);
+        assert!(presenter.vertices > 0);
+        assert_eq!(presenter.size, [639.0, 479.0]);
+        assert!(!loading.title_drawn);
+        assert!(loading.take_ready().is_none());
+
+        let control = LoopControl(std::cell::Cell::new(EventLoopControl::Poll));
+        loading.dispatch_platform_window_event(
+            &control,
+            WindowEvent::Resized(horizon_client_platform::PhysicalSize::new(600, 400)),
+        );
+        assert_eq!(loading.menu_size(), [600, 400]);
+        loading.dispatch_platform_window_event(
+            &control,
+            WindowEvent::CursorMoved {
+                position: horizon_client_platform::PhysicalPosition::new(120.0, 90.0),
+            },
+        );
+        assert_eq!(loading.menu.cursor, (120.0, 90.0));
+
+        presenter.accepts = true;
+        loading.draw_on(&mut presenter);
+        assert!(loading.title_drawn);
         assert!(loading.ready_for_handoff());
+        assert!(matches!(loading.take_ready(), Some(Err(ref e)) if e == "loader failure"));
+    }
+
+    #[test]
+    fn loader_handoff_waits_for_the_title_frame() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut loading = loading(receiver);
+        loading.ui_at = Some(Instant::now());
+        loading.loaded = Some(Err("loader failure".into()));
+        assert!(loading.take_ready().is_none());
+        loading.title_drawn = true;
+        assert!(matches!(loading.take_ready(), Some(Err(ref e)) if e == "loader failure"));
     }
 
     #[test]

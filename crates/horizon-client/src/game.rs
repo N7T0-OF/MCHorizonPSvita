@@ -22031,6 +22031,8 @@ fn run_event_loop(mut game: Game<'_>) -> Result<()> {
 struct Loading {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    /// The host's framebuffer size, including when no desktop window exists.
+    viewport: [u32; 2],
     /// The boot screen's atlas, until the pack's GUI atlas replaces it.
     boot: horizon_client::hud::HudAtlas,
     gui: Option<UiResources>,
@@ -22057,17 +22059,32 @@ struct Loading {
     menu: startup_menu::StartupMenu,
     error: Option<Box<dyn std::error::Error>>,
 }
-/// How long the handoff waits for the first title frame before building the
-/// world renderer anyway (a hidden window may never be asked to redraw).
+/// How long a hidden desktop window waits for a first title frame before
+/// handing off anyway; a host without a window must present the frame.
 const TITLE_FRAME_WAIT: Duration = Duration::from_secs(1);
 impl Loading {
     /// The world renderer is built on the main thread, so building it before
     /// the title is on the screen holds the title back by that build. Wait for
     /// one title frame first, unless a world is waiting to open.
     fn ready_for_handoff(&self) -> bool {
+        self.ready_for_handoff_with_window(self.window.is_some())
+    }
+
+    fn ready_for_handoff_with_window(&self, desktop_window: bool) -> bool {
         self.title_drawn
             || self.menu.pending.is_some()
-            || self.ui_at.is_none_or(|at| at.elapsed() >= TITLE_FRAME_WAIT)
+            || self
+                .ui_at
+                .is_none_or(|at| desktop_window && at.elapsed() >= TITLE_FRAME_WAIT)
+    }
+
+    /// Take the loader result only when the original menu is ready to hand off.
+    fn take_ready(&mut self) -> Option<std::result::Result<Loaded, String>> {
+        if self.menu.reload_packs || !self.ready_for_handoff() {
+            None
+        } else {
+            self.loaded.take()
+        }
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -22205,6 +22222,7 @@ impl Loading {
         horizon_client::ui_theme::reset_atlas();
         self.apply_menu_settings();
         let Some(window) = self.window.clone() else {
+            self.ui_at = Some(Instant::now());
             return;
         };
         let offscreen = self.options.as_ref().is_some_and(|o| o.offscreen);
@@ -22266,13 +22284,17 @@ impl Loading {
         control.set_control_flow(EventLoopControl::Poll);
     }
     fn draw(&mut self) {
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| horizon_client::presentation::viewport_size(r))
-        else {
+        let Some(mut renderer) = self.renderer.take() else {
             return;
         };
+        self.draw_on(&mut renderer);
+        self.renderer = Some(renderer);
+    }
+
+    /// Draw the existing startup menu through the host's presentation backend.
+    fn draw_on(&mut self, renderer: &mut dyn horizon_client::presentation::PresentationBackend) {
+        let size = horizon_client::presentation::viewport_size(renderer);
+        self.viewport = size;
         let mut batch = HudBatch::new(size);
         self.draw_menu(&mut batch);
         self.menu.frame_drawn((batch.width, batch.height));
@@ -22281,15 +22303,13 @@ impl Loading {
             self.started.elapsed().as_secs_f32(),
             self.settings.file.double("panoramaScrollSpeed") as f32,
         );
-        if let Some(renderer) = &mut self.renderer {
-            match horizon_client::presentation::present(renderer, &frame) {
-                Ok(true) if self.gui.is_some() && self.menu.pending.is_none() => {
-                    self.title_drawn = true;
-                    self.menu.perf.title_shown()
-                }
-                Ok(_) => {}
-                Err(e) => log::warn!("Horizon: loading screen frame failed: {e}"),
+        match horizon_client::presentation::present(renderer, &frame) {
+            Ok(true) if self.gui.is_some() && self.menu.pending.is_none() => {
+                self.title_drawn = true;
+                self.menu.perf.title_shown()
             }
+            Ok(_) => {}
+            Err(e) => log::warn!("Horizon: loading screen frame failed: {e}"),
         }
         if !self.shown {
             self.shown = true;
@@ -22443,11 +22463,7 @@ impl ApplicationHandler for App {
                     event_loop.exit();
                     return;
                 }
-                match if loading.menu.reload_packs || !loading.ready_for_handoff() {
-                    None
-                } else {
-                    loading.loaded.take()
-                } {
+                match loading.take_ready() {
                     None => Step::Waiting,
                     Some(Err(e)) => Step::Failed(e.into()),
                     Some(Ok(loaded)) => match loading.finish(loaded) {
@@ -22530,6 +22546,7 @@ fn run_loading(
     let loading = Loading {
         window: None,
         renderer: None,
+        viewport: [1280, 720],
         boot: horizon_client::hud::HudAtlas::boot(),
         gui: None,
         settings,
