@@ -4,6 +4,8 @@
 pub mod bidi;
 pub mod font;
 pub mod image;
+pub mod pad_art;
+pub mod pad_cursor;
 pub mod title_edition;
 
 use horizon_client_core::{lang, text};

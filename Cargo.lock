@@ -1437,6 +1437,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "horizon-client-core",
+ "horizon-client-input",
  "horizon-core",
  "horizon-hud-data",
  "horizon-resource-zip",
