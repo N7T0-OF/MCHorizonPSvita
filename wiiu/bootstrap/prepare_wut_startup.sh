@@ -20,7 +20,13 @@ trap 'rm -rf -- "$work"' EXIT
 # other std code. Localize only this symbol in a copy of that member so WUT's
 # startup can supply __preinit_user and initialize its heaps and threads.
 mapfile -t members < <("$nm" -A --defined-only "$input" 2>/dev/null | awk '
-   $NF == "__rpx_start" && $(NF-1) ~ /^[A-Z]$/ { split($1, a, ":"); print a[2] }
+   $NF == "__rpx_start" && $(NF-1) ~ /^[A-Z]$/ {
+      line = $0
+      sub(/[[:space:]]+[A-Z][[:space:]]+__rpx_start$/, "", line)
+      sub(/:[^:]*$/, "", line)
+      sub(/^.*:/, "", line)
+      print line
+   }
 ')
 if [[ ${#members[@]} -ne 1 ]]; then
    echo "expected exactly one global Rust __rpx_start in $input; found ${#members[@]}" >&2
