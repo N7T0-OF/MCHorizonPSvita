@@ -42,6 +42,7 @@ pub mod effects;
 pub mod environment;
 pub mod extras;
 pub mod fast_hash;
+pub use horizon_client_ui::flat_settings;
 pub mod fog;
 pub use horizon_client_font::font;
 pub mod gfx;

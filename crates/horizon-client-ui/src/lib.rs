@@ -4,6 +4,7 @@
 pub mod confirm_screen;
 pub mod datapack;
 pub mod dialog_screen;
+pub mod flat_settings;
 pub mod game_rules_screen;
 pub mod hud_layout;
 pub mod pad_glyph;
