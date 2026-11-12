@@ -159,3 +159,10 @@ Conséquence attendue : après un échec de ce type, VitaShell refuse **tous** l
 sa fermeture complète. Le mode USB ne le redémarre pas. Hypothèse cohérente avec les faits
 (le bootstrap 0.0.3 échoue alors que le 0.0.2, de même structure, s'était installé), mais
 **non confirmée** tant qu'une installation n'a pas réussi après redémarrage de VitaShell.
+
+Suite (2026-11-12, 22h59 heure console) : `HorizonVita.vpk`, bien formé, a encore été refusé
+avec `0xFFFFFFFF`. Il n'est pas établi que VitaShell avait été fermé entre-temps. L'application
+`HRZN00001` n'est plus dans `ux0:app` (désinstallée côté console). `deploy-vita.ps1` dépose
+maintenant aussi le contenu du VPK en dossier (`ux0:vpk/HorizonVita-dossier`) : l'option
+« Installer le dossier » de VitaShell n'utilise pas son lecteur d'archives, ce qui permet de
+trancher entre « archive refusée » et « autre cause ».
