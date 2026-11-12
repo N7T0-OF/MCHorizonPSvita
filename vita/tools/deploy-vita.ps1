@@ -1,5 +1,5 @@
 # Copie HorizonVita.vpk sur la carte de la PS Vita montee par VitaShell (USB).
-# Ne supprime rien et n'ecrit que dans <lecteur>:\vpk.
+# N'ecrit que dans <lecteur>:\vpk, ou il remplace HorizonVita.vpk et HorizonVita-dossier.
 param(
   [string]$Drive = 'F:',
   [string]$Vpk = (Join-Path $PSScriptRoot '..\..\..\VPK here\HorizonVita.vpk')
