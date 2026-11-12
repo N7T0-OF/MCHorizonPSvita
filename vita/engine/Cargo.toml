@@ -1,0 +1,27 @@
+[package]
+name = "horizon-vita-engine"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "PS Vita hardware 3D bring-up for the Horizon port: GXM renderer, chunked terrain, measurements. Not the game yet."
+
+[dependencies]
+horizon-core = { path = "../../crates/horizon-core" }
+glam = "0.30"
+
+[target.'cfg(target_os = "vita")'.dependencies]
+vitasdk-sys = { version = "0.3.3", features = ["SceGxm_stub", "SceDisplay_stub", "SceSysmem_stub", "SceCtrl_stub"] }
+
+[package.metadata.vita]
+title_id = "HRZN00003"
+title_name = "Horizon Vita 3D DEV"
+assets = "./static"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = 3
+
+# Kept out of the Horizon workspace: it builds for the Vita target with build-std.
+[workspace]

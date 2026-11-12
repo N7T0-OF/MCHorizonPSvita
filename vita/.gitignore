@@ -3,3 +3,4 @@ rust-platform/target/
 artifacts/
 *.vpk
 rust-probe/target/
+engine/target/

@@ -95,3 +95,31 @@ audio, et le remplacement de `memmap2`/`ring`.
   affiche leur chemin et leur contenu. Rien n'est chargé.
 - Téléchargement Modrinth/CurseForge depuis la console : non commencé. Ne servirait qu'aux
   packs de ressources et de données tant que le moteur ne tourne pas.
+
+## 7. Rendu 3D matériel (`vita/engine`, 2026-11-12)
+
+État : **compilé et empaqueté, pas encore lancé sur console.**
+
+- Rendu : GXM natif. `libvita2d` (MIT, `a8f15ab09`) fournit le contexte GXM, les tampons
+  d'affichage, le tampon de profondeur S8D24 et son shader couleur précompilé
+  (`position * wvp`). Le moteur lui passe sa propre matrice de perspective et ses propres
+  tampons de sommets et d'indices mappés pour le GPU. Aucun compilateur de shaders n'est
+  requis sur la console (pas de `libshacccg.suprx`, contrairement à vitaGL).
+- Limite connue : vita2d n'a pas de shader « texture x couleur par sommet ». Les textures
+  demanderont un shader à nous, donc un moyen de le compiler.
+- Scène : 8x8 chunks de 16x16 colonnes, hauteurs issues du bruit Perlin de `horizon-core`.
+  Le découpage en colonnes et le mesher sont un substitut écrit pour ce test : ce n'est ni
+  le générateur de monde d'Horizon ni `horizon-terrain-mesh`.
+- Référence PC, graine 20261112 : checksum `DF77845F`, 64 chunks, 104 384 sommets,
+  52 192 triangles.
+- Mesures affichées et écrites dans `ux0:data/HorizonVita/engine.log` : FPS, durée de frame,
+  temps CPU, attente GPU (`sceGxmFinish`), chunks dessinés après culling, RAM et VRAM libres.
+- Commandes : sticks, L/R, Croix (graine suivante), Triangle (vsync), Carré (culling),
+  Rond (mesure GPU), START.
+
+## 8. Erreur d'installation 0xFFFFFFFF (résolue côté empaquetage)
+
+`cargo vita build vpk` (cargo-vita 0.2.2) écrit sous Windows des noms d'entrées zip avec des
+antislashs (`sce_sys\icon0.png`). VitaShell refuse alors le VPK avec `0xFFFFFFFF`.
+`vita/tools/build-rust-vpk.ps1` compile l'eboot avec cargo-vita puis empaquette lui-même
+avec des `/`, et vérifie les noms. L'installation du VPK corrigé reste à confirmer sur console.
