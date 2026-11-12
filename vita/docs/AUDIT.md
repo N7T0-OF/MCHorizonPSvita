@@ -123,3 +123,39 @@ audio, et le remplacement de `memmap2`/`ring`.
 antislashs (`sce_sys\icon0.png`). VitaShell refuse alors le VPK avec `0xFFFFFFFF`.
 `vita/tools/build-rust-vpk.ps1` compile l'eboot avec cargo-vita puis empaquette lui-même
 avec des `/`, et vérifie les noms. L'installation du VPK corrigé reste à confirmer sur console.
+
+## 9. Une seule application (`HorizonVita.vpk`, 0.0.4)
+
+`vita/engine` regroupe désormais tout dans un seul binaire Rust, Title ID `HRZN00001` :
+menu, JOUER (le test de rendu 3D de la section 7), MODS (dossiers), DIAGNOSTIC (commandes,
+tactile, mémoire, auto-test du bruit `horizon-core` comparé à la valeur du PC `F748DA62`).
+Le menu et le rendu partagent la même boucle de frames : pas de second programme à lancer.
+Journal : `ux0:data/HorizonVita/horizon.log`. `vita/bootstrap` (C/SDL2) et `vita/rust-probe`
+restent dans le dépôt comme références, ils ne sont plus distribués.
+
+État : compilé et empaqueté ; **jamais lancé sur console**.
+
+Construction et copie :
+
+```
+vita/tools/build-rust-vpk.ps1 -Crate engine -TitleId HRZN00001 -AppName "Horizon Vita" -AppVer 00.04 -OutName HorizonVita -VitaSdk <sdk>
+vita/tools/deploy-vita.ps1        # copie vers F:\vpk si la carte est montée
+```
+
+## 10. 0xFFFFFFFF sur tous les VPK : cause probable côté VitaShell
+
+Après le VPK aux antislashs (section 8), les trois VPK suivants, pourtant bien formés
+(noms, CRC et tailles vérifiés entre en-têtes locaux et répertoire central), ont échoué avec
+la même erreur. Lecture du code de VitaShell (`81af709`) :
+
+- `0xFFFFFFFF` (-1) ne sort que de la lecture d'archive (`archiveOpen`, `archiveFileOpen`,
+  `archiveFileRead`), avant toute installation ;
+- `archiveFileOpen` renvoie -1 si une archive est « déjà ouverte » (`archive_fd` non nul) ;
+- `extractArchiveFile` appelle `psarcFileClose` au lieu de `archiveFileClose` quand la
+  création du fichier de destination échoue : `archive_fd` reste alors non nul. C'est ce qui
+  arrive avec un nom contenant un antislash.
+
+Conséquence attendue : après un échec de ce type, VitaShell refuse **tous** les VPK jusqu'à
+sa fermeture complète. Le mode USB ne le redémarre pas. Hypothèse cohérente avec les faits
+(le bootstrap 0.0.3 échoue alors que le 0.0.2, de même structure, s'était installé), mais
+**non confirmée** tant qu'une installation n'a pas réussi après redémarrage de VitaShell.

@@ -9,7 +9,8 @@ param(
   [Parameter(Mandatory)][string]$AppName,
   [string]$AppVer = '00.01',
   [string]$VitaSdk = $env:VITASDK,
-  [string]$TargetDir
+  [string]$TargetDir,
+  [string]$OutName                               # nom du VPK sans extension ; defaut : nom du binaire
 )
 $ErrorActionPreference = 'Stop'
 if (-not $VitaSdk -or -not (Test-Path -LiteralPath "$VitaSdk\bin\arm-vita-eabi-gcc.exe")) {
@@ -42,7 +43,8 @@ $rel = Join-Path $TargetDir 'armv7-sony-vita-newlibeabihf\release'
 $self = Get-ChildItem -LiteralPath $rel -Filter *.self | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $self) { throw "aucun .self dans $rel" }
 $sfo = Join-Path $rel 'param.sfo'
-$vpk = Join-Path $rel "$($self.BaseName).vpk"
+if (-not $OutName) { $OutName = $self.BaseName }
+$vpk = Join-Path $rel "$OutName.vpk"
 # ATTRIBUTE2=12 : budget memoire etendu, comme le fait cargo-vita.
 Run 'vita-mksfoex.exe' @('-d', 'ATTRIBUTE2=12', '-s', "APP_VER=$AppVer", '-s', "TITLE_ID=$TitleId", $AppName, $sfo)
 $packArgs = @('-s', $sfo, '-b', $self.FullName)

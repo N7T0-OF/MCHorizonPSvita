@@ -23,6 +23,7 @@ extern "C" {
     fn vita2d_set_vblank_wait(enable: c_int);
     fn vita2d_get_context() -> *mut SceGxmContext;
     fn vita2d_load_default_pgf() -> *mut c_void;
+    fn vita2d_draw_rectangle(x: f32, y: f32, w: f32, h: f32, color: u32);
     fn vita2d_pgf_draw_text(font: *mut c_void, x: c_int, y: c_int, color: u32, scale: f32, text: *const c_char) -> c_int;
     static _vita2d_colorVertexProgram: *mut SceGxmVertexProgram;
     static _vita2d_colorFragmentProgram: *mut SceGxmFragmentProgram;
@@ -30,6 +31,9 @@ extern "C" {
 }
 
 /// Memory the GPU can read: a kernel block mapped into GXM.
+/// 8x8 fallback glyphs, used only when the system font cannot be loaded.
+static FONT: &[u8; 2048] = include_bytes!("font.bin");
+
 struct GpuBuffer {
     block: SceUID,
     base: *mut u8,
@@ -193,14 +197,42 @@ impl Renderer {
         drawn
     }
 
-    pub fn text(&mut self, x: i32, y: i32, colour: u32, text: &str) {
+    pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, colour: u32) {
+        unsafe { vita2d_draw_rectangle(x as f32, y as f32, w as f32, h as f32, colour) };
+    }
+
+    /// Draws text with its baseline at `y`. `scale` 1.0 is about 17 pixels tall.
+    pub fn text(&mut self, x: i32, y: i32, colour: u32, scale: f32, text: &str) {
         if self.font.is_null() {
-            return;
+            let pixel = (scale * 2.0).round().max(1.0) as i32;
+            return self.bitmap_text(x, y - 7 * pixel, colour, pixel, text);
         }
         self.text.clear();
         self.text.extend(text.bytes().filter(|&b| b != 0));
         self.text.push(0);
-        unsafe { vita2d_pgf_draw_text(self.font, x, y, colour, 1.0, self.text.as_ptr() as *const c_char) };
+        unsafe { vita2d_pgf_draw_text(self.font, x, y, colour, scale, self.text.as_ptr() as *const c_char) };
+    }
+
+    fn bitmap_text(&mut self, mut x: i32, y: i32, colour: u32, pixel: i32, text: &str) {
+        for ch in text.chars() {
+            let glyph = if ch.is_ascii() { ch as usize } else { b'?' as usize };
+            for row in 0..8 {
+                let bits = FONT[glyph * 8 + row];
+                let mut col = 0;
+                while col < 8 {
+                    if bits & (0x80 >> col) == 0 {
+                        col += 1;
+                        continue;
+                    }
+                    let start = col;
+                    while col < 8 && bits & (0x80 >> col) != 0 {
+                        col += 1;
+                    }
+                    self.rect(x + start * pixel, y + row as i32 * pixel, (col - start) * pixel, pixel, colour);
+                }
+            }
+            x += 8 * pixel;
+        }
     }
 
     /// Ends the scene. With `time_gpu`, waits for the GPU and returns how long that took:

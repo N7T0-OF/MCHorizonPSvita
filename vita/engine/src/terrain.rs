@@ -149,3 +149,27 @@ fn palette(ground: i32, x: i32, z: i32) -> ((u32, u32, u32), (u32, u32, u32)) {
 fn shade((r, g, b): (u32, u32, u32), light: u32) -> u32 {
     0xFF00_0000 | (b * light / 255) << 16 | (g * light / 255) << 8 | (r * light / 255)
 }
+
+/// The Rust probe's self-test: three octaves of Horizon's Perlin noise over a 240x136
+/// grid, as an FNV-1a checksum of the samples' bits. A console that computes
+/// `horizon-core` exactly like the PC gives the same value.
+pub fn noise_checksum(seed: i64) -> u32 {
+    let mut random = XoroshiroRandom::new(seed);
+    let octaves = [PerlinNoise::new(&mut random), PerlinNoise::new(&mut random), PerlinNoise::new(&mut random)];
+    let mut checksum: u32 = 0x811c_9dc5;
+    for z in 0..136 {
+        for x in 0..240 {
+            let (fx, fz) = (x as f64 / 48.0, z as f64 / 48.0);
+            let mut value = 0.0f32;
+            let mut scale = 1.0f64;
+            for octave in &octaves {
+                value += octave.get2(fx * scale, fz * scale) / scale as f32;
+                scale *= 2.0;
+            }
+            for byte in value.to_bits().to_le_bytes() {
+                checksum = (checksum ^ byte as u32).wrapping_mul(0x0100_0193);
+            }
+        }
+    }
+    checksum
+}
