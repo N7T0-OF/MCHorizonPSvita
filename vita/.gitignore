@@ -1,0 +1,4 @@
+bootstrap/build/
+rust-platform/target/
+artifacts/
+*.vpk

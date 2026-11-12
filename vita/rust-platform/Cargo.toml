@@ -1,0 +1,10 @@
+[package]
+name = "horizon-vita-platform-contract"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Contract and capabilities for a future native Horizon Vita Rust port; NOT a Vita game"
+
+[lib]
+name = "horizon_vita_platform_contract"
+path = "src/lib.rs"

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "channel": "vita-stable",
+  "status": "example-only-disabled",
+  "vita_build_version": null,
+  "upstream_commit": null,
+  "title_id": "HRZN00001",
+  "download": {
+    "url": null,
+    "size_bytes": null,
+    "sha256": null,
+    "signature": null
+  },
+  "requirements": {
+    "min_bootstrap_version": null,
+    "supported_minecraft_versions": [],
+    "hardware": "psvita-armv7"
+  },
+  "message": "Ne pas utiliser ce fichier comme canal de mise à jour actif."
+}
