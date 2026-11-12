@@ -1,0 +1,26 @@
+[package]
+name = "horizon-vita-rust-probe"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "PS Vita Rust probe: runs Horizon's own horizon-core noise on the console. Not the game."
+
+[dependencies]
+horizon-core = { path = "../../crates/horizon-core" }
+
+[target.'cfg(target_os = "vita")'.dependencies]
+vitasdk-sys = { version = "0.3.3", features = ["SceDisplay_stub", "SceSysmem_stub", "SceCtrl_stub"] }
+
+[package.metadata.vita]
+title_id = "HRZN00002"
+title_name = "Horizon Vita Rust Probe"
+assets = "./static"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = 2
+
+# Kept out of the Horizon workspace: it builds for the Vita target with build-std.
+[workspace]

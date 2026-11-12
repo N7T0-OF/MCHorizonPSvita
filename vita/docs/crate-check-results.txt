@@ -1,0 +1,23 @@
+﻿cargo check --target armv7-sony-vita-newlibeabihf -Z build-std=std,panic_abort
+rustc 1.102.0-nightly (3ef0c22cd 2026-11-11) ; commit b1b86617d ; 2026-11-12T22:23:48
+OK   horizon-core                                          1s  
+OK   horizon-terrain-data                                  1s  
+OK   horizon-hud-data                                      1s  
+OK   horizon-threads            --no-default-features      1s  
+OK   horizon-assets                                        1s  
+OK   horizon-world                                         1s  
+OK   horizon-client-core                                   1s  
+OK   horizon-items                                         1s  
+OK   horizon-resource-zip                                  1s  
+OK   horizon-terrain-mesh       --no-default-features      2s  
+OK   horizon-client-platform    --no-default-features      1s  
+OK   horizon-client-input       --no-default-features      1s  
+OK   horizon-client-font                                   1s  
+OK   horizon-shaders                                       1s  
+OK   horizon-client-hud                                    2s  
+OK   horizon-client-ui                                     1s  
+OK   horizon-protocol                                      1s  
+OK   horizon-command                                       1s  
+FAIL horizon-server                                        1s  [1 erreurs] error: no library targets found in package `horizon-server`
+FAIL horizon-client-render      --no-default-features      2s  [39 erreurs] error: failed to run custom build command for `ring v0.17.14`
+FAIL horizon-client             --no-default-features      4s  [47 erreurs] error: failed to run custom build command for `ring v0.17.14`

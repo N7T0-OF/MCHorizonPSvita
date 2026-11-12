@@ -2,3 +2,4 @@ bootstrap/build/
 rust-platform/target/
 artifacts/
 *.vpk
+rust-probe/target/

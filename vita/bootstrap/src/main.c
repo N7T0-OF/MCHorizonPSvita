@@ -5,6 +5,7 @@
  */
 #include <SDL2/SDL.h>
 #include <psp2/ctrl.h>
+#include <psp2/io/dirent.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include <psp2/kernel/sysmem.h>
@@ -16,7 +17,7 @@
 
 #define W 960
 #define H 544
-#define VERSION "0.0.2"
+#define VERSION "0.0.3"
 #define DATA_DIR "ux0:data/HorizonVita"
 #define LOG_PATH DATA_DIR "/bootstrap.log"
 
@@ -139,13 +140,54 @@ static void draw_menu(SDL_Renderer *r, int selected, int page) {
     fill(r, 48, y, 6, 53, on ? 46 : 65, on ? 197 : 78, on ? 169 : 92);
     letters(r, items[i], 72, y + 14, 3, 238, 246, 245);
     if (i == 0) letters(r, "NOT READY", 644, y + 18, 2, 250, 183, 99);
-    if (i == 1) letters(r, "NOT READY", 644, y + 18, 2, 170, 182, 190);
+    if (i == 1) letters(r, "FOLDERS", 644, y + 18, 2, 170, 182, 190);
     if (i == 2) letters(r, "INPUT AND MEMORY", 644, y + 18, 2, 170, 182, 190);
   }
   fill(r, 48, 483, 864, 2, 65, 87, 95);
   if (page == 1) letters(r, "NO GAME YET - ENGINE NOT PORTED", 48, 502, 2, 252, 194, 116);
   else if (page == 2) letters(r, "MODS REQUIRE ENGINE PORT", 48, 502, 2, 252, 194, 116);
   else letters(r, "UP DOWN SELECT   CROSS OPEN   CIRCLE BACK   START EXIT", 48, 502, 2, 151, 168, 179);
+  SDL_RenderPresent(r);
+}
+
+/* Dossiers utilisateur. Rien n'y est charge par ce bootstrap : le moteur n'existe pas encore. */
+static const char *const FOLDER_NAMES[] = {"MODS", "RESOURCEPACKS", "SHADERPACKS", "SAVES"};
+static const char *const FOLDER_PATHS[] = {DATA_DIR "/mods", DATA_DIR "/resourcepacks", DATA_DIR "/shaderpacks", DATA_DIR "/saves"};
+static int g_folder_count[4];
+
+static int count_entries(const char *path) {
+  SceUID dir = sceIoDopen(path);
+  if (dir < 0) return -1;
+  SceIoDirent ent;
+  int n = 0;
+  memset(&ent, 0, sizeof ent);
+  while (sceIoDread(dir, &ent) > 0) n++;
+  sceIoDclose(dir);
+  return n;
+}
+
+static void scan_folders(void) {
+  for (int i = 0; i < 4; i++) {
+    sceIoMkdir(FOLDER_PATHS[i], 0777);
+    g_folder_count[i] = count_entries(FOLDER_PATHS[i]);
+    logf_("folder %s: %d entries", FOLDER_PATHS[i], g_folder_count[i]);
+  }
+}
+
+static void draw_folders(SDL_Renderer *r) {
+  draw_header(r);
+  letters(r, "DROP FILES HERE FROM PC - VITASHELL USB OR FTP", 48, 188, 2, 238, 246, 245);
+  for (int i = 0; i < 4; i++) {
+    int y = 226 + i * 58;
+    fill(r, 48, y, 864, 48, 26, 39, 51);
+    letters(r, FOLDER_NAMES[i], 64, y + 6, 2, 46, 197, 169);
+    letters(r, FOLDER_PATHS[i], 64, y + 26, 2, 238, 246, 245);
+    if (g_folder_count[i] < 0) letters(r, "MISSING", 760, y + 16, 2, 255, 120, 120);
+    else textf(r, 760, y + 16, 2, 170, 182, 190, "%d FILES", g_folder_count[i]);
+  }
+  letters(r, "NOT LOADED YET - ENGINE NOT PORTED - JAVA JARS NEVER RUN", 48, 462, 2, 252, 194, 116);
+  fill(r, 48, 483, 864, 2, 65, 87, 95);
+  letters(r, "CROSS RESCAN   CIRCLE BACK   START EXIT", 48, 502, 2, 151, 168, 179);
   SDL_RenderPresent(r);
 }
 
@@ -238,12 +280,14 @@ int main(int argc, char **argv) {
       previous = d.pad.buttons;
       if (pressed & SCE_CTRL_START) running = 0;
       if (pressed & SCE_CTRL_CIRCLE) page = 0;
-      if (page != 3) {
+      if (page == 2 && (pressed & SCE_CTRL_CROSS)) scan_folders();
+      else if (page != 3) {
         if (pressed & SCE_CTRL_UP) selected = (selected + 3) % 4, page = 0;
         if (pressed & SCE_CTRL_DOWN) selected = (selected + 1) % 4, page = 0;
         if (pressed & SCE_CTRL_CROSS) {
           if (selected == 3) running = 0;
           else page = selected + 1;
+          if (page == 2) scan_folders();
           logf_("open item %d", selected);
         }
       }
@@ -254,6 +298,8 @@ int main(int argc, char **argv) {
       d.mem.size = sizeof d.mem;
       d.have_mem = sceKernelGetFreeMemorySize(&d.mem) >= 0;
       draw_diag(renderer, &d);
+    } else if (page == 2) {
+      draw_folders(renderer);
     } else {
       draw_menu(renderer, selected, page);
     }

@@ -186,7 +186,12 @@ impl Laps {
 /// with more wall time than CPU time waited (for a lock, or for a core on a
 /// busy machine).
 pub fn thread_cpu() -> Option<Duration> {
-    #[cfg(unix)]
+    // The PS Vita is `unix` to Rust but has no per-thread CPU clock.
+    #[cfg(target_os = "vita")]
+    {
+        None
+    }
+    #[cfg(all(unix, not(target_os = "vita")))]
     {
         let t = rustix::time::clock_gettime(rustix::time::ClockId::ThreadCPUTime);
         Some(Duration::new(t.tv_sec as u64, t.tv_nsec as u32))
