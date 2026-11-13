@@ -60,3 +60,5 @@ if (Test-Path -LiteralPath $Resources) {
   "Pas de ressources preparees ($Resources) : lance prepare-resources.ps1 pour le test Horizon."
 }
 "Sur la Vita : quitte le mode USB, FERME VitaShell completement, relance-le, puis ux0:vpk/HorizonVita.vpk > Croix > installer."
+# robocopy laisse 1 ("fichiers copies") dans $LASTEXITCODE : ce n'est pas un echec.
+exit 0
