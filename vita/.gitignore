@@ -4,3 +4,5 @@ artifacts/
 *.vpk
 rust-probe/target/
 engine/target/
+world-tools/target/
+*.hvw

@@ -6,8 +6,9 @@
 //! buffers, so no shader compiler is needed on the console.
 
 use crate::terrain::{ChunkMesh, Vertex};
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use glam::{Mat4, Vec4};
+use std::io::Read as _;
 use std::time::{Duration, Instant};
 use vitasdk_sys::*;
 
@@ -28,12 +29,21 @@ extern "C" {
     static _vita2d_colorVertexProgram: *mut SceGxmVertexProgram;
     static _vita2d_colorFragmentProgram: *mut SceGxmFragmentProgram;
     static _vita2d_colorWvpParam: *const SceGxmProgramParameter;
+    // A vita2d_texture begins with its SceGxmTexture, so its pointer is also one.
+    fn vita2d_create_empty_texture(w: c_uint, h: c_uint) -> *mut c_void;
+    fn vita2d_free_texture(texture: *mut c_void);
+    fn vita2d_texture_get_datap(texture: *const c_void) -> *mut c_void;
+    fn vita2d_texture_get_stride(texture: *const c_void) -> c_uint;
+    fn vita2d_texture_set_filters(texture: *mut c_void, min: SceGxmTextureFilter, mag: SceGxmTextureFilter);
+    static _vita2d_textureVertexProgram: *mut SceGxmVertexProgram;
+    static _vita2d_textureFragmentProgram: *mut SceGxmFragmentProgram;
+    static _vita2d_textureWvpParam: *const SceGxmProgramParameter;
 }
 
-/// Memory the GPU can read: a kernel block mapped into GXM.
 /// 8x8 fallback glyphs, used only when the system font cannot be loaded.
 static FONT: &[u8; 2048] = include_bytes!("font.bin");
 
+/// Memory the GPU can read: a kernel block mapped into GXM.
 struct GpuBuffer {
     block: SceUID,
     base: *mut u8,
@@ -251,6 +261,163 @@ impl Renderer {
     /// Waits until the GPU no longer reads any buffer of ours.
     pub fn finish(&mut self) {
         unsafe { vita2d_wait_rendering_done() };
+    }
+
+    /// Loads a world pack (`vita/world-tools`, `pack`): an atlas and textured quads.
+    pub fn load_pack(&mut self, path: &str) -> Result<WorldScene, String> {
+        let io = |error: std::io::Error| format!("{path}: {error}");
+        let mut file = std::fs::File::open(path).map_err(io)?;
+        let length = file.metadata().map_err(io)?.len();
+        let mut header = [0u8; 64];
+        file.read_exact(&mut header).map_err(io)?;
+        let word = |at: usize| u32::from_le_bytes(header[at..at + 4].try_into().unwrap());
+        if &header[0..4] != b"HVW1" || word(4) != 1 {
+            return Err(format!("{path}: not a version 1 world pack"));
+        }
+        let (width, height, batch_count, quads) = (word(8) as usize, word(12) as usize, word(16) as usize, word(20) as usize);
+        let expected = 64 + (width * height * 4 + batch_count * 36 + quads * 4 * PACK_VERTEX) as u64;
+        if width == 0 || height == 0 || width > 4096 || height > 4096 || batch_count > 65536 || quads > 1 << 21 || length != expected {
+            return Err(format!("{path}: inconsistent header ({width}x{height}, {batch_count} batches, {quads} quads, {length} bytes)"));
+        }
+
+        let texture = Texture(unsafe { vita2d_create_empty_texture(width as c_uint, height as c_uint) });
+        if texture.0.is_null() {
+            return Err(format!("no memory for a {width}x{height} texture"));
+        }
+        let (data, stride) = unsafe { (vita2d_texture_get_datap(texture.0) as *mut u8, vita2d_texture_get_stride(texture.0) as usize) };
+        if data.is_null() || stride < width * 4 {
+            return Err(format!("unexpected texture layout (stride {stride})"));
+        }
+        for row in 0..height {
+            // SAFETY: vita2d allocated `stride * height` bytes for this texture.
+            file.read_exact(unsafe { core::slice::from_raw_parts_mut(data.add(row * stride), width * 4) }).map_err(io)?;
+        }
+        unsafe { vita2d_texture_set_filters(texture.0, SCE_GXM_TEXTURE_FILTER_POINT, SCE_GXM_TEXTURE_FILTER_POINT) };
+
+        let mut table = vec![0u8; batch_count * 36];
+        file.read_exact(&mut table).map_err(io)?;
+        let mut batches = Vec::with_capacity(batch_count);
+        for entry in table.chunks_exact(36) {
+            let float = |at: usize| f32::from_le_bytes(entry[at..at + 4].try_into().unwrap());
+            let word = |at: usize| u32::from_le_bytes(entry[at..at + 4].try_into().unwrap());
+            let batch = PackBatch { min: [float(0), float(4), float(8)], max: [float(12), float(16), float(20)], mode: word(24), first_quad: word(28), quad_count: word(32) };
+            if batch.quad_count as usize > QUADS_PER_DRAW || batch.first_quad as usize + batch.quad_count as usize > quads {
+                return Err(format!("{path}: a batch is out of range"));
+            }
+            batches.push(batch);
+        }
+
+        let vertices = GpuBuffer::new(quads * 4 * PACK_VERTEX)?;
+        // SAFETY: the buffer holds at least that many bytes.
+        file.read_exact(unsafe { core::slice::from_raw_parts_mut(vertices.base, quads * 4 * PACK_VERTEX) }).map_err(io)?;
+        // Every quad is two triangles over its four vertices: one pattern serves all draws.
+        let indices = GpuBuffer::new(QUADS_PER_DRAW * 6 * size_of::<u16>())?;
+        let pattern = unsafe { core::slice::from_raw_parts_mut(indices.base as *mut u16, QUADS_PER_DRAW * 6) };
+        for (quad, six) in pattern.chunks_exact_mut(6).enumerate() {
+            let base = (quad * 4) as u16;
+            six.copy_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        let float = |at: usize| f32::from_le_bytes(header[at..at + 4].try_into().unwrap());
+        Ok(WorldScene {
+            vertices,
+            indices,
+            texture,
+            batches,
+            quads,
+            atlas: (width as u32, height as u32),
+            camera: [float(24), float(28), float(32)],
+            seed: i64::from_le_bytes(header[36..44].try_into().unwrap()),
+            radius: word(52),
+        })
+    }
+
+    /// Draws a world pack's batches inside the view, in the pack's order: opaque,
+    /// cutout, translucent. `faces`: 0 draws both sides, 1 and 2 cull one winding.
+    pub fn draw_world(&mut self, scene: &WorldScene, wvp: Mat4, cull: bool, faces: u32) -> Drawn {
+        let matrix = wvp.to_cols_array();
+        let mut drawn = Drawn { chunks: 0, triangles: 0 };
+        unsafe {
+            let ctx = self.context;
+            sceGxmSetFrontDepthFunc(ctx, SCE_GXM_DEPTH_FUNC_LESS_EQUAL);
+            sceGxmSetBackDepthFunc(ctx, SCE_GXM_DEPTH_FUNC_LESS_EQUAL);
+            sceGxmSetFrontDepthWriteEnable(ctx, SCE_GXM_DEPTH_WRITE_ENABLED);
+            sceGxmSetBackDepthWriteEnable(ctx, SCE_GXM_DEPTH_WRITE_ENABLED);
+            sceGxmSetCullMode(ctx, match faces {
+                1 => SCE_GXM_CULL_CW,
+                2 => SCE_GXM_CULL_CCW,
+                _ => SCE_GXM_CULL_NONE,
+            });
+            sceGxmSetVertexProgram(ctx, _vita2d_textureVertexProgram);
+            sceGxmSetFragmentProgram(ctx, _vita2d_textureFragmentProgram);
+            let mut uniforms: *mut c_void = core::ptr::null_mut();
+            sceGxmReserveVertexDefaultUniformBuffer(ctx, &mut uniforms);
+            sceGxmSetUniformDataF(uniforms, _vita2d_textureWvpParam, 0, 16, matrix.as_ptr());
+            sceGxmSetFragmentTexture(ctx, 0, scene.texture.0 as *const SceGxmTexture);
+            for batch in &scene.batches {
+                if cull && !visible(&wvp, batch.min, batch.max) {
+                    continue;
+                }
+                sceGxmSetVertexStream(ctx, 0, scene.vertices.base.add(batch.first_quad as usize * 4 * PACK_VERTEX) as *const c_void);
+                sceGxmDraw(ctx, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, scene.indices.base as *const c_void, batch.quad_count * 6);
+                drawn.chunks += 1;
+                drawn.triangles += batch.quad_count as usize * 2;
+            }
+            // The 2D overlay drawn after this must be neither culled nor hidden.
+            sceGxmSetCullMode(ctx, SCE_GXM_CULL_NONE);
+            sceGxmSetFrontDepthFunc(ctx, SCE_GXM_DEPTH_FUNC_ALWAYS);
+            sceGxmSetBackDepthFunc(ctx, SCE_GXM_DEPTH_FUNC_ALWAYS);
+        }
+        drawn
+    }
+}
+
+/// Bytes of a pack vertex: position (3 f32) and atlas coordinates (2 f32), which is
+/// what vita2d's texture shader reads.
+const PACK_VERTEX: usize = 20;
+/// Quads one draw can address with 16-bit indices.
+const QUADS_PER_DRAW: usize = 16384;
+
+struct Texture(*mut c_void);
+
+impl Drop for Texture {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { vita2d_free_texture(self.0) };
+        }
+    }
+}
+
+struct PackBatch {
+    min: [f32; 3],
+    max: [f32; 3],
+    /// 0 opaque, 1 cutout, 2 translucent: only the draw order depends on it today.
+    #[allow(dead_code)]
+    mode: u32,
+    first_quad: u32,
+    quad_count: u32,
+}
+
+/// A packed world on the GPU. Call `Renderer::finish` before dropping one that was drawn.
+pub struct WorldScene {
+    vertices: GpuBuffer,
+    indices: GpuBuffer,
+    texture: Texture,
+    batches: Vec<PackBatch>,
+    pub quads: usize,
+    pub atlas: (u32, u32),
+    /// Where the pack suggests the camera starts.
+    pub camera: [f32; 3],
+    pub seed: i64,
+    /// Chunks around the centre one.
+    pub radius: u32,
+}
+
+impl WorldScene {
+    pub fn gpu_bytes(&self) -> usize {
+        self.vertices.bytes + self.indices.bytes + (self.atlas.0 * self.atlas.1 * 4) as usize
+    }
+    pub fn batch_count(&self) -> usize {
+        self.batches.len()
     }
 }
 

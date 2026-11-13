@@ -9,6 +9,9 @@ use std::time::Instant;
 use vitasdk_sys::*;
 
 const DATA: &str = "ux0:data/HorizonVita";
+/// A real Horizon world region packed on the PC (`vita/world-tools`). Derived from the
+/// user's own Minecraft: it lives on their memory card only.
+const WORLD_PACK: &str = "ux0:data/HorizonVita/world/world.hvw";
 /// (label, folder under `DATA`). Nothing here is loaded yet: there is no game engine.
 const FOLDERS: [(&str, &str); 4] = [("Mods", "mods"), ("Packs de ressources", "resourcepacks"), ("Shaders", "shaderpacks"), ("Sauvegardes", "saves")];
 /// Frames averaged for the numbers shown and logged by the 3D test.
@@ -73,17 +76,26 @@ fn scan_folders(log: &mut Log) -> [Option<usize>; 4] {
     counts
 }
 
-/// The 3D test: a scene on the GPU and a fly camera.
+/// What JOUER draws.
+enum Content {
+    /// A real Horizon world region, generated and meshed on the PC by Horizon's own
+    /// crates (`vita/world-tools`, `pack`) and read from the memory card.
+    Pack(gfx::WorldScene),
+    /// The stand-in built on the console from `horizon-core`'s noise.
+    StandIn { scene: gfx::Scene, world: terrain::World, seed: i64 },
+}
+
+/// The 3D screen: a scene on the GPU and a fly camera.
 struct Game {
-    scene: gfx::Scene,
-    world: terrain::World,
+    content: Content,
     summary: String,
-    seed: i64,
     position: Vec3,
     yaw: f32,
     pitch: f32,
     vsync: bool,
     cull: bool,
+    /// Back-face culling: 0 off, 1 and 2 for each winding (to find the right one on hardware).
+    faces: u32,
     time_gpu: bool,
     frames: u32,
     sums: [f32; 3],
@@ -92,7 +104,7 @@ struct Game {
 }
 
 impl Game {
-    fn load(renderer: &mut gfx::Renderer, log: &mut Log, seed: i64) -> Result<(gfx::Scene, terrain::World, String), String> {
+    fn load_stand_in(renderer: &mut gfx::Renderer, log: &mut Log, seed: i64) -> Result<(Content, String), String> {
         let built = build(seed);
         let start = Instant::now();
         let scene = renderer.upload(&built.meshes)?;
@@ -108,7 +120,7 @@ impl Game {
             }
         );
         log.line(&format!(
-            "scene seed {seed} checksum {checksum:08X}: {} chunks, {} vertices, {} triangles, {} KiB GPU-mapped; generate {} ms, mesh {} ms, upload {} ms",
+            "stand-in seed {seed} checksum {checksum:08X}: {} chunks, {} vertices, {} triangles, {} KiB GPU-mapped; generate {} ms, mesh {} ms, upload {} ms",
             scene.chunk_count(),
             scene.vertex_count,
             scene.triangle_count,
@@ -117,24 +129,58 @@ impl Game {
             built.mesh.as_millis(),
             start.elapsed().as_millis()
         ));
-        Ok((scene, built.world, summary))
+        Ok((Content::StandIn { scene, world: built.world, seed }, summary))
     }
 
     fn new(renderer: &mut gfx::Renderer, log: &mut Log) -> Result<Self, String> {
-        let (scene, world, summary) = Self::load(renderer, log, FIRST_SEED)?;
+        let side = terrain::SIDE as f32;
+        let mut start = (Vec3::new(side / 2.0, 52.0, side - 6.0), -0.45);
+        let packed = if std::fs::metadata(WORLD_PACK).is_ok() {
+            let began = Instant::now();
+            match renderer.load_pack(WORLD_PACK) {
+                Ok(scene) => {
+                    log.line(&format!(
+                        "world pack: seed {}, radius {}, {} quads in {} batches, atlas {}x{}, {} KiB on the GPU, loaded in {} ms",
+                        scene.seed,
+                        scene.radius,
+                        scene.quads,
+                        scene.batch_count(),
+                        scene.atlas.0,
+                        scene.atlas.1,
+                        scene.gpu_bytes() / 1024,
+                        began.elapsed().as_millis()
+                    ));
+                    Some(scene)
+                }
+                Err(error) => {
+                    log.line(&format!("world pack not loaded: {error}"));
+                    None
+                }
+            }
+        } else {
+            log.line(&format!("no world pack at {WORLD_PACK}: drawing the stand-in"));
+            None
+        };
+        let (content, summary) = match packed {
+            Some(scene) => {
+                start = (Vec3::from_array(scene.camera), -0.2);
+                let side = 2 * scene.radius + 1;
+                let summary = format!("Monde Horizon : graine {}, {side}x{side} chunks, {} quads, atlas {}x{}", scene.seed, scene.quads, scene.atlas.0, scene.atlas.1);
+                (Content::Pack(scene), summary)
+            }
+            None => Self::load_stand_in(renderer, log, FIRST_SEED)?,
+        };
         let (user, cdram) = free_memory();
         log.line(&format!("free after scene: user {user} KiB, cdram {cdram} KiB, heap peak {} B", heap::PEAK.load(Relaxed)));
-        let side = terrain::SIDE as f32;
         Ok(Game {
-            scene,
-            world,
+            content,
             summary,
-            seed: FIRST_SEED,
-            position: Vec3::new(side / 2.0, 52.0, side - 6.0),
+            position: start.0,
             yaw: 0.0,
-            pitch: -0.45,
+            pitch: start.1,
             vsync: true,
             cull: true,
+            faces: 0,
             time_gpu: true,
             frames: 0,
             sums: [0.0; 3],
@@ -157,15 +203,17 @@ impl Game {
         if pressed & SCE_CTRL_CIRCLE != 0 {
             self.time_gpu = !self.time_gpu;
         }
+        if pressed & SCE_CTRL_SELECT != 0 {
+            self.faces = (self.faces + 1) % 3;
+        }
         if pressed & SCE_CTRL_CROSS != 0 {
-            // The GPU may still read the old buffers: wait before they are freed.
-            renderer.finish();
-            match Self::load(renderer, log, self.seed + 1) {
-                Ok((scene, world, summary)) => {
-                    (self.scene, self.world, self.summary) = (scene, world, summary);
-                    self.seed += 1;
+            if let Content::StandIn { seed, .. } = self.content {
+                // The GPU may still read the old buffers: wait before they are freed.
+                renderer.finish();
+                match Self::load_stand_in(renderer, log, seed + 1) {
+                    Ok((content, summary)) => (self.content, self.summary) = (content, summary),
+                    Err(error) => log.line(&format!("scene load failed: {error}")),
                 }
-                Err(error) => log.line(&format!("scene load failed: {error}")),
             }
         }
         self.yaw += axis(pad.rx) * 2.2 * dt;
@@ -173,24 +221,30 @@ impl Game {
         let right = Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin());
         let lift = (pad.buttons & SCE_CTRL_RTRIGGER != 0) as i32 - (pad.buttons & SCE_CTRL_LTRIGGER != 0) as i32;
         self.position += (self.forward() * -axis(pad.ly) + right * axis(pad.lx) + Vec3::Y * lift as f32) * 16.0 * dt;
-        // Stay above the ground: this is a fly camera, not player physics.
-        let side = terrain::SIDE as f32;
-        if self.position.x >= 0.0 && self.position.z >= 0.0 && self.position.x < side && self.position.z < side {
-            self.position.y = self.position.y.max(self.world.surface_at(self.position.x, self.position.z) + 1.7);
+        // The stand-in keeps the camera above its ground. This is a fly camera, not
+        // player physics, and a pack carries no blocks to collide with.
+        if let Content::StandIn { world, .. } = &self.content {
+            let side = terrain::SIDE as f32;
+            if self.position.x >= 0.0 && self.position.z >= 0.0 && self.position.x < side && self.position.z < side {
+                self.position.y = self.position.y.max(world.surface_at(self.position.x, self.position.z) + 1.7);
+            }
         }
     }
 
     /// Draws the frame; `started` is when this frame's CPU work began.
     fn draw(&mut self, renderer: &mut gfx::Renderer, log: &mut Log, started: Instant, dt: f32) {
         let wvp = Mat4::perspective_rh_gl(70f32.to_radians(), 960.0 / 544.0, 0.1, 400.0) * Mat4::look_to_rh(self.position, self.forward(), Vec3::Y);
-        let drawn = renderer.draw(&self.scene, wvp, self.cull);
+        let (drawn, batches, title) = match &self.content {
+            Content::Pack(scene) => (renderer.draw_world(scene, wvp, self.cull, self.faces), scene.batch_count(), "vrai monde Horizon généré sur PC, affiché par la Vita (pas encore jouable)"),
+            Content::StandIn { scene, .. } => (renderer.draw(scene, wvp, self.cull), scene.chunk_count(), "test de rendu 3D, PAS le jeu"),
+        };
         let (user, cdram) = free_memory();
         let [frame_ms, cpu_ms, gpu_ms] = self.shown;
         let fps = if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 };
         let on = |flag: bool| if flag { "oui" } else { "non" };
 
         renderer.rect(0, 0, 960, 128, 0x8000_0000);
-        renderer.text(16, 26, WARN, 1.0, &format!("Horizon Vita {VERSION} - test de rendu 3D, PAS le jeu"));
+        renderer.text(16, 26, WARN, 1.0, &format!("Horizon Vita {VERSION} - {title}"));
         renderer.text(
             16,
             48,
@@ -206,20 +260,14 @@ impl Game {
             70,
             TEXT,
             1.0,
-            &format!(
-                "chunks {}/{}   triangles {}   vsync {}   culling {}",
-                drawn.chunks,
-                self.scene.chunk_count(),
-                drawn.triangles,
-                on(self.vsync),
-                on(self.cull)
-            ),
+            &format!("lots {}/{batches}   triangles {}   vsync {}   culling {}   faces {}", drawn.chunks, drawn.triangles, on(self.vsync), on(self.cull), self.faces),
         );
         renderer.text(16, 92, TEXT, 1.0, &format!("RAM libre {user} KiB   VRAM libre {cdram} KiB   tas Rust {} KiB", heap::LIVE.load(Relaxed) / 1024));
         renderer.text(16, 114, TEXT, 1.0, &self.summary);
         renderer.rect(0, 490, 960, 54, 0x8000_0000);
-        renderer.text(16, 510, TEXT, 1.0, "Sticks : bouger / regarder   L R : descendre / monter   Croix : autre terrain   START : menu");
-        renderer.text(16, 532, TEXT, 1.0, "Triangle : vsync   Carré : culling   Rond : mesure GPU");
+        let cross = if matches!(self.content, Content::StandIn { .. }) { "   Croix : autre terrain" } else { "" };
+        renderer.text(16, 510, TEXT, 1.0, &format!("Sticks : bouger / regarder   L R : descendre / monter{cross}   START : menu"));
+        renderer.text(16, 532, TEXT, 1.0, "Triangle : vsync   Carré : culling   SELECT : faces   Rond : mesure GPU");
 
         let cpu = started.elapsed();
         let gpu = renderer.end(self.time_gpu);
@@ -232,17 +280,19 @@ impl Game {
             (self.frames, self.sums) = (0, [0.0; 3]);
             let [frame_ms, cpu_ms, gpu_ms] = self.shown;
             log.sample(&format!(
-                "fps {:.1} frame {frame_ms:.2} cpu {cpu_ms:.2} gpu {} chunks {}/{} tris {} vsync {} cull {} free {user}/{cdram} KiB pos {:.0},{:.0},{:.0}",
+                "fps {:.1} frame {frame_ms:.2} cpu {cpu_ms:.2} gpu {} draws {}/{batches} tris {} vsync {} cull {} faces {} free {user}/{cdram} KiB pos {:.0},{:.0},{:.0} yaw {:.2} pitch {:.2}",
                 1000.0 / frame_ms.max(0.001),
                 if self.time_gpu { format!("{gpu_ms:.2}") } else { "off".into() },
                 drawn.chunks,
-                self.scene.chunk_count(),
                 drawn.triangles,
                 self.vsync,
                 self.cull,
+                self.faces,
                 self.position.x,
                 self.position.y,
-                self.position.z
+                self.position.z,
+                self.yaw,
+                self.pitch
             ));
         }
     }
@@ -292,6 +342,8 @@ pub fn run() {
     let (user, cdram) = free_memory();
     log.line(&format!("free after graphics: user {user} KiB, cdram {cdram} KiB"));
 
+    // Checked once: asking the memory card every frame would cost the menu its frame rate.
+    let has_pack = std::fs::metadata(WORLD_PACK).is_ok();
     let mut screen = Screen::Menu;
     let mut selected = 0usize;
     let mut game: Option<Game> = None;
@@ -393,9 +445,9 @@ pub fn run() {
                 }
             }
             Screen::Menu => {
-                header(&mut renderer, "Le moteur de jeu n'est pas encore porté. JOUER ouvre le test de rendu 3D.");
+                header(&mut renderer, "Pas encore jouable : JOUER affiche un monde Horizon préparé sur PC, ou le test 3D.");
                 let items = [
-                    ("JOUER", "test de rendu 3D"),
+                    ("JOUER", if has_pack { "monde Horizon (pack du PC)" } else { "test de rendu 3D" }),
                     ("MODS", "dossiers sur la carte"),
                     ("DIAGNOSTIC", "commandes, mémoire, calcul"),
                     ("QUITTER", ""),

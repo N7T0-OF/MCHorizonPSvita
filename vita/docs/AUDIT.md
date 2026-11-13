@@ -166,3 +166,77 @@ avec `0xFFFFFFFF`. Il n'est pas établi que VitaShell avait été fermé entre-t
 maintenant aussi le contenu du VPK en dossier (`ux0:vpk/HorizonVita-dossier`) : l'option
 « Installer le dossier » de VitaShell n'utilise pas son lecteur d'archives, ce qui permet de
 trancher entre « archive refusée » et « autre cause ».
+
+## 11. Test sur console du 0.0.4 (2026-11-12, PCH-1000)
+
+Confirmé par photos et par `ux0:data/HorizonVita/horizon.log` :
+
+- L'installation a réussi après fermeture complète de VitaShell : l'hypothèse de la
+  section 10 est confirmée.
+- Menu, dossiers, diagnostic : fonctionnent. Police système chargée.
+- Calcul Horizon : bruit `F748DA62` et monde de test `DF77845F`, **identiques au PC**.
+  Le calcul du bruit (32 640 échantillons, 3 octaves) prend 99,8 ms sur la console.
+- Rendu 3D GXM : perspective, profondeur, caméra aux sticks et culling fonctionnent.
+
+Mesures (terrain de test, couleurs unies, 52 192 triangles au total) :
+
+| Mesure | Valeur |
+| --- | ---: |
+| RAM libre avant graphismes / après | 235 520 / 225 280 KiB |
+| Mémoire vidéo libre avant / après | 114 688 / 91 136 KiB |
+| Génération + maillage + envoi du terrain de test | 51 + 26 + 25 ms |
+| CPU par frame | ~2,0 ms |
+| GPU, 45 000 triangles à l'écran | 23 à 24 ms (36 à 39 FPS) |
+| GPU, 28 000 à 35 000 triangles | 14 à 15 ms (58 à 60 FPS) |
+
+Le rendu est limité par le GPU. Causes probables, non encore mesurées séparément : pas de
+suppression des faces arrière, et le shader de vita2d mélange par alpha, ce qui empêche le
+GPU d'écarter les surfaces cachées.
+
+## 12. Le vrai Horizon : coût mesuré sur PC, et ce qui en découle
+
+`vita/world-tools`, binaire `phases`, sur les ressources préparées par le launcher
+(26.3, 1 301 sprites de 64 px) :
+
+| Étape | Temps PC | Mémoire après | Pic |
+| --- | ---: | ---: | ---: |
+| `Assets::load` | 0,05 s | 11 MiB | 24 MiB |
+| `reload_for_terrain` (modèles, sprites) | 0,56 s | 62 MiB | 107 MiB |
+| `BlockFacts::load` | 0,16 s | 70 MiB | 186 MiB |
+| `load_visibility`, `MeshTables`, `Biomes` | 0,12 s | 87 MiB | 186 MiB |
+| `GeneratorData::load`, générateur | 0,10 s | 92 MiB | 186 MiB |
+
+Générer et mailler ensuite 9 chunks prend 0,06 s. Le coût est donc au démarrage :
+`BlockFacts::load` analyse `gameplay-facts.json` (55 Mo), deux fois. Avec 225 MiB libres
+et un processeur bien plus lent, charger ces ressources brutes sur la console n'est pas
+raisonnable : il faudra un format compact préparé sur PC. Non commencé.
+
+## 13. Monde Horizon emballé sur PC (0.0.5)
+
+Étape intermédiaire, pour voir le vrai Minecraft sur la console avant d'y porter le
+chargement :
+
+- `vita/world-tools`, binaire `pack` : le générateur 26.3 d'Horizon (relief, grottes,
+  structures, puis décoration : 2 437 éléments placés, 0 non pris en charge sur 49 chunks)
+  et le mesher d'Horizon tournent **sur le PC**. Le résultat est écrit dans un fichier
+  `.hvw` : un atlas et des quads texturés.
+- `preview` : rendu logiciel du `.hvw` en PNG, avec les mêmes matrices et le même ordre de
+  dessin que la console. Contrôlé à l'œil : herbe, terre, plantes, eau corrects.
+- La console lit `ux0:data/HorizonVita/world/world.hvw` et l'affiche avec le shader
+  texture précompilé de vita2d. Sans ce fichier, JOUER affiche le terrain de test.
+
+Référence (graine 20261112, rayon 2) : 25 chunks, 77 994 quads (66 037 opaques, 10 601
+découpés, 1 356 translucides), 317 lots, 130 cellules d'atlas, atlas 1024x64, 6,2 MiB.
+
+Limites, toutes dues au shader disponible (une texture, pas de couleur par sommet) :
+
+- la teinte et l'ombrage de chaque quad sont cuits dans l'atlas : éclairage plat, pas
+  d'occlusion ambiante lissée ;
+- tout est éclairé par le ciel, grottes comprises : le moteur de lumière n'est pas branché ;
+- les textures découpées (feuilles, herbes) sont mélangées par alpha et écrivent la
+  profondeur : des trous peuvent apparaître derrière elles ;
+- sprites réduits à 16 px, pas d'animation ;
+- rien n'est généré, chargé ni modifiable sur la console : ce n'est pas jouable.
+
+État : VPK 0.0.5 compilé, fichier monde copié sur la carte ; **pas encore lancé sur console**.
+Le fichier monde dérive du Minecraft de l'utilisateur : il n'est ni versionné ni distribué.

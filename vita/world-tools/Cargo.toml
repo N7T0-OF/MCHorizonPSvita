@@ -1,0 +1,22 @@
+[package]
+name = "horizon-vita-world-tools"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "PC tools for the PS Vita port: measure Horizon's terrain start-up, and pack a real Horizon world region (generated and meshed by Horizon's own crates) for the console to draw"
+
+[dependencies]
+horizon-core = { path = "../../crates/horizon-core" }
+horizon-items = { path = "../../crates/horizon-items" }
+horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
+horizon-terrain-mesh = { path = "../../crates/horizon-terrain-mesh", default-features = false }
+horizon-world = { path = "../../crates/horizon-world" }
+png = "0.18"
+glam = "0.30"
+
+[profile.release]
+opt-level = 3
+
+# Kept out of the Horizon workspace, like the other vita/ crates.
+[workspace]
