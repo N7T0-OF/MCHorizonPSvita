@@ -53,7 +53,7 @@ Erreurs de `cargo check -p horizon-client --no-default-features` sur la cible Vi
 | `ring` (via `ureq` + TLS) | assembleur sans support Vita | désactiver TLS pour le portage, ou le fork `vita-rust/ring` |
 | `libmimalloc-sys` | allocateur desktop | fonction `mimalloc` déjà optionnelle dans `horizon-threads` |
 | `memmap2`, `rustix` | API Unix absentes de la Vita | remplacer par des lectures de fichiers |
-| `xxhash-rust` (44 erreurs) | fonctions activées par `horizon-client` | à analyser |
+| `xxhash-rust` (44 erreurs, via `horizon-client-lib`, fonction `xxh3`) | son code NEON s'active dès que le processeur a NEON, mais il n'est écrit que pour l'ARM 64 bits ; le Cortex-A9 de la Vita a NEON en 32 bits | petit correctif : limiter ce code à `target_arch = "aarch64"` (copie corrigée dans `third_party`, comme les autres correctifs du dépôt) |
 
 Aucune de ces dépendances n'est du gameplay : ce sont des couches système. C'est là que le
 portage doit travailler, pas dans la logique du jeu.
