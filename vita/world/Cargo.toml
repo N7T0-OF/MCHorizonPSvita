@@ -1,0 +1,22 @@
+[package]
+name = "horizon-vita-world"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Runs Horizon's own world generator and terrain mesher for the PS Vita port: the same code on the PC tools and on the console"
+
+[features]
+# Horizon's reduced generator, as the Wii U port builds it: terrain without the
+# structure and feature data, which costs far less memory to load.
+terrain-only = ["horizon-world/cafe-terrain-only"]
+
+[dependencies]
+horizon-core = { path = "../../crates/horizon-core" }
+horizon-items = { path = "../../crates/horizon-items" }
+horizon-terrain-data = { path = "../../crates/horizon-terrain-data" }
+horizon-terrain-mesh = { path = "../../crates/horizon-terrain-mesh", default-features = false }
+horizon-world = { path = "../../crates/horizon-world" }
+
+# Kept out of the Horizon workspace, like the other vita/ crates.
+[workspace]

@@ -240,3 +240,44 @@ Limites, toutes dues au shader disponible (une texture, pas de couleur par somme
 
 État : VPK 0.0.5 compilé, fichier monde copié sur la carte ; **pas encore lancé sur console**.
 Le fichier monde dérive du Minecraft de l'utilisateur : il n'est ni versionné ni distribué.
+
+## 14. Test sur console du 0.0.5 (2026-11-13)
+
+Le monde Horizon emballé s'affiche, avec les textures du joueur. Photo et journal :
+
+| Vue | Triangles dessinés | GPU | FPS |
+| --- | ---: | ---: | ---: |
+| Presque rien à l'écran | 4 000 à 5 000 | 13,4 ms | 60 |
+| Vue moyenne | 33 000 à 35 000 | 14 à 18 ms | 50 à 58 |
+| Horizon entier à l'écran | 80 000 à 102 000 | 47 à 54 ms | 18 à 20 |
+
+CPU : 2,5 à 2,8 ms par frame. Le GPU limite. Le coût d'environ 13 ms même avec très peu de
+triangles indique un coût fixe par frame (remplissage de l'écran ou mélange alpha), pas
+seulement le nombre de triangles. Le culling des faces arrière (SELECT) n'a pas été essayé.
+
+## 15. Pont PC (0.0.6) et test Horizon sur console (0.0.7)
+
+Pont : serveur TCP dans l'application (port 4747), désactivé par défaut, activable par le
+menu PONT PC. Commandes : état, journal, capture d'écran, boutons, caméra, réglages,
+envoi et lecture de fichiers sous `ux0:data/HorizonVita` uniquement (chemins avec `..`
+refusés). Client PC : `vita/bridge` (`vita-bridge`). Le protocole complet a été testé sur
+PC contre le même code serveur (mode `bridge` de l'application compilée pour PC) :
+toutes les commandes, transfert de 6,2 MiB identique à l'aller et au retour, chemin
+`../evil.txt` refusé. **Pas encore testé sur console.**
+
+Test Horizon : DIAGNOSTIC, Triangle (ou `vita-bridge <ip> run horizon`). Il charge les
+ressources préparées copiées dans `ux0:data/HorizonVita/resources/26.3` (151 Mo, sans
+sons ni langues), puis génère et maille 1 puis 3x3 chunks avec le vrai code d'Horizon,
+build réduit du port Wii U. Références PC (même code, 64 bits) :
+
+| Étape | Temps PC | Résultat |
+| --- | ---: | --- |
+| Chargement complet | 1,0 s | 1 301 sprites de 64 px, apparition (0, 0) |
+| 1 chunk | 0,05 s | 2 689 quads, somme du maillage `6CD47A79`, surface 80 |
+| 3x3 chunks | 0,12 s | 24 007 quads, somme du maillage `D33FE9FC` |
+
+La console devra donner les mêmes sommes. La 0.0.7 demande un tas de 224 MiB
+(`_newlib_heap_size_user`) au lieu de 128 MiB par défaut, pour le pic mesuré de 159 MiB
+en 32 bits. **Compilée et liée (VPK de 3,7 Mo), pas encore lancée sur console.**
+
+Tableau système par système : `PORT_STATUS.md`.

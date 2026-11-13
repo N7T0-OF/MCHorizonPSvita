@@ -1,6 +1,6 @@
 [package]
 name = "horizon-vita-engine"
-version = "0.0.5"
+version = "0.0.7"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -8,10 +8,12 @@ description = "Horizon Vita: one PS Vita app with the menu, diagnostics, mod fol
 
 [dependencies]
 horizon-core = { path = "../../crates/horizon-core" }
+# Horizon's terrain stack, in the reduced build the Wii U port uses.
+horizon-vita-world = { path = "../world", features = ["terrain-only"] }
 glam = "0.30"
 
 [target.'cfg(target_os = "vita")'.dependencies]
-vitasdk-sys = { version = "0.3.3", features = ["SceGxm_stub", "SceDisplay_stub", "SceSysmem_stub", "SceCtrl_stub", "SceTouch_stub"] }
+vitasdk-sys = { version = "0.3.3", features = ["SceGxm_stub", "SceDisplay_stub", "SceSysmem_stub", "SceCtrl_stub", "SceTouch_stub", "SceNetCtl_stub", "SceProcessmgr_stub"] }
 
 [package.metadata.vita]
 title_id = "HRZN00001"

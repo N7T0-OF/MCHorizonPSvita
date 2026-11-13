@@ -7,6 +7,8 @@
 //!
 //! On the PC (`cargo run --release`) it prints the checksums the console must show.
 
+mod bridge;
+mod horizon_test;
 mod terrain;
 
 #[cfg(target_os = "vita")]
@@ -22,6 +24,15 @@ pub const FIRST_SEED: i64 = 20261112;
 /// the PC. The console must compute the same values from the same `horizon-core` code.
 pub const EXPECTED_NOISE: u32 = 0xF748_DA62;
 pub const EXPECTED_WORLD: u32 = 0xDF77_845F;
+
+/// The size of the C library's heap, which is also the Rust heap: it is reserved once
+/// at start-up (128 MiB when this is absent). The application has about 365 MiB in
+/// all (measured: 230 MiB free with the default heap). Horizon's terrain stack peaks
+/// near 160 MiB while it loads.
+#[cfg(target_os = "vita")]
+#[used]
+#[no_mangle]
+pub static _newlib_heap_size_user: u32 = 224 << 20;
 
 /// Counts what the Rust heap holds.
 pub mod heap {
@@ -75,6 +86,47 @@ pub fn build(seed: i64) -> Built {
 
 #[cfg(not(target_os = "vita"))]
 fn main() {
+    // `bridge <folder>`: the console's bridge server on the PC, with made-up answers
+    // from the frame loop, to test the protocol and `vita-bridge` without a console.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [mode, root] = args.as_slice() {
+        if mode == "horizon" {
+            // The console's Horizon test, on the PC: the reference for its numbers.
+            let report = horizon_test::start(root.into(), FIRST_SEED, || 0).expect("test thread");
+            let mut shown = 0;
+            loop {
+                let lines = report.lock().unwrap().clone();
+                for line in &lines[shown..] {
+                    println!("{line}");
+                }
+                shown = lines.len();
+                if lines.last().is_some_and(|last| last == "DONE" || last.starts_with("FAILED")) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+        if mode == "bridge" {
+            let server = bridge::Bridge::start(root.clone(), VERSION);
+            println!("bridge test server on port {}, files under {root}", bridge::PORT);
+            loop {
+                while let Some(envelope) = server.poll() {
+                    let answer = match envelope.request {
+                        bridge::Request::State => Ok(b"version test\nscreen menu\n".to_vec()),
+                        bridge::Request::Shot => Ok((0..960 * 544).flat_map(|i| [(i % 960 / 4) as u8, (i / 960 / 3) as u8, 96, 255]).collect()),
+                        bridge::Request::Key(name) => Ok(format!("key {name}").into_bytes()),
+                        bridge::Request::Camera(camera) => Ok(format!("camera {camera:?}").into_bytes()),
+                        bridge::Request::Set(name, value) => Ok(format!("{name} = {value}").into_bytes()),
+                        bridge::Request::Reload => Ok(b"reloaded".to_vec()),
+                        bridge::Request::Run(what) => Ok(format!("run {what}").into_bytes()),
+                        bridge::Request::Quit => std::process::exit(0),
+                    };
+                    let _ = envelope.reply.send(answer);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
     let built = build(FIRST_SEED);
     let vertices: usize = built.meshes.iter().map(|m| m.vertices.len()).sum();
     let indices: usize = built.meshes.iter().map(|m| m.indices.len()).sum();

@@ -1,0 +1,12 @@
+[package]
+name = "vita-bridge"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "PC client of Horizon Vita's development bridge: state, log, screenshots, buttons, camera and file transfer over the local network"
+
+[dependencies]
+png = "0.18"
+
+[workspace]

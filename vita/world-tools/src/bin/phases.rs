@@ -1,11 +1,12 @@
-//! Times and weighs each step of Horizon's terrain start-up on the PC (the steps of
-//! `wiiu/worldgen`'s `load_world`), to find what a PS Vita cannot afford.
+//! Times and weighs each stage of Horizon's terrain start-up on the PC, then a small
+//! region, through the same `vita/world` code the console runs.
+//!
+//! Build it for 32 bits to see what a PS Vita would hold in memory:
+//!   cargo run --release --target i686-pc-windows-msvc --features terrain-only --bin phases -- <resources>
 //!
 //! usage: phases <prepared-26.3-resources> [seed]
 
-use horizon_items::blocks::BlockFacts;
-use horizon_terrain_mesh::{assets::Assets, biome::Biomes, mesher::MeshTables, models::load_visibility};
-use horizon_world::worldgen::generator::{GeneratorData, OverworldGenerator};
+use horizon_vita_world::Horizon;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
@@ -34,51 +35,50 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static HEAP: Counting = Counting;
 
-struct Meter(Instant, usize);
-
-impl Meter {
-    fn step(&mut self, name: &str) {
-        let live = LIVE.load(Relaxed);
-        println!(
-            "{name:<34} {:>7.2} s   live {:>7.1} MiB ({:+.1})   peak so far {:>7.1} MiB",
-            self.0.elapsed().as_secs_f32(),
-            live as f64 / 1048576.0,
-            (live as f64 - self.1 as f64) / 1048576.0,
-            PEAK.load(Relaxed) as f64 / 1048576.0
-        );
-        (self.0, self.1) = (Instant::now(), live);
-    }
+fn mib(bytes: usize) -> f64 {
+    bytes as f64 / 1048576.0
 }
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let root = args.next().expect("usage: <prepared-26.3-resources> [seed]");
-    let root = Path::new(&root);
     let seed: i64 = args.next().map_or(20261112, |s| s.parse().expect("seed is an integer"));
-    let mut meter = Meter(Instant::now(), 0);
 
-    let assets = Assets::load(root).expect("assets");
-    let registry = assets.registry;
-    meter.step("Assets::load (registry)");
-    let render = assets.reload_for_terrain_with_progress(root, |_| {}).expect("block models and sprites");
-    println!("  sprites: {} layers of {} px = {:.1} MiB RGBA", render.texture_layers, render.sprite_size, render.pixels.get().len() as f64 / 1048576.0);
-    meter.step("reload_for_terrain (models, sprites)");
-    let facts = BlockFacts::load(root, registry).expect("block facts");
-    meter.step("BlockFacts::load");
-    let visibility = load_visibility(root, registry).expect("visibility");
-    meter.step("load_visibility");
-    let tables = MeshTables::new(&assets, &render, &facts, visibility).expect("mesh tables");
-    meter.step("MeshTables::new");
-    let biomes = Biomes::load(root).expect("biome colours");
-    meter.step("Biomes::load");
-    let data = GeneratorData::load(&root.join("worldgen"), registry).expect("worldgen data");
-    meter.step("GeneratorData::load");
-    let generator = OverworldGenerator::without_structures(data, seed).expect("generator");
-    meter.step("OverworldGenerator::new");
-    let spawn = generator.spawn_position().expect("spawn");
-    println!("  spawn {spawn:?}");
-    meter.step("spawn_position");
-    drop(facts);
-    meter.step("drop BlockFacts");
-    let _keep = (tables, biomes, generator, render, registry.len());
+    // Each stage is reported when the next one begins.
+    let mut stage: Option<(String, Instant, usize)> = None;
+    let mut report = |next: &str| {
+        if let Some((name, began, before)) = stage.take() {
+            let live = LIVE.load(Relaxed);
+            println!("{name:<28} {:>7.2} s   live {:>7.1} MiB ({:+.1})   peak so far {:>7.1} MiB", began.elapsed().as_secs_f32(), mib(live), mib(live) - mib(before), mib(PEAK.load(Relaxed)));
+        }
+        stage = Some((next.to_owned(), Instant::now(), LIVE.load(Relaxed)));
+    };
+    let mut horizon = Horizon::load(Path::new(&root), seed, &mut report).expect("Horizon");
+    let (sprite, layers, pixels) = horizon.sprites();
+    println!("sprites: {layers} of {sprite} px = {:.1} MiB RGBA; spawn {:?}", mib(pixels.len()), horizon.spawn);
+    drop(pixels);
+
+    let centre = (horizon.spawn[0].div_euclid(16), horizon.spawn[1].div_euclid(16));
+    for (radius, decorate) in [(0, false), (1, false), (1, !cfg!(feature = "terrain-only"))] {
+        let began = Instant::now();
+        let (region, decorated, _) = horizon.generate(centre, radius, decorate).expect("generation");
+        let generated = began.elapsed();
+        let began = Instant::now();
+        let mut quads = 0usize;
+        for cz in centre.1 - radius..=centre.1 + radius {
+            for cx in centre.0 - radius..=centre.0 + radius {
+                horizon.mesh(&region, (cx, cz), false, |_, _, _| quads += 1).expect("meshing");
+            }
+        }
+        let side = 2 * radius + 1;
+        println!(
+            "{side}x{side} chunks{}: generate {:.3} s, mesh {:.3} s, {quads} quads, region {:.1} MiB, live {:.1} MiB, peak {:.1} MiB",
+            if decorate { format!(" decorated ({} features)", decorated.placed) } else { String::new() },
+            generated.as_secs_f32(),
+            began.elapsed().as_secs_f32(),
+            mib(region.bytes()),
+            mib(LIVE.load(Relaxed)),
+            mib(PEAK.load(Relaxed))
+        );
+    }
 }

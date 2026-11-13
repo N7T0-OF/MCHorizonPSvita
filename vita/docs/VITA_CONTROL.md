@@ -23,3 +23,23 @@ python tools/vita-bridge.py capture --camera 0
 python tools/vita-bridge.py key enter --window-title VitaSync --allow-control
 ```
 Les captures sont écrites dans `artifacts/local-only/vita-latest.png` et peuvent être ouvertes par Claude Code via ses outils de fichiers. Le numéro de caméra est à identifier dans OBS/Windows ; aucune commande n'est envoyée à la Vita si le plugin VitaSync ne fonctionne pas. Les touches doivent correspondre à la configuration VitaSync. Le pont ne contient aucun contrôle réseau et ne garantit pas un support HID complet.
+
+## Pont PC intégré (depuis la 0.0.6)
+
+Sur la Vita : menu PONT PC, Croix. La ligne affiche l'adresse IP de la console quand le
+Wi-Fi est connecté. Le choix est gardé (`ux0:data/HorizonVita/bridge.on`).
+
+Sur le PC (même réseau), `vita-bridge.exe` est dans `AA PS VITA\_toolchain` :
+
+```
+vita-bridge <ip> state                 état, mesures, lignes du test Horizon
+vita-bridge <ip> shot ecran.png        capture de l'écran de la console
+vita-bridge <ip> log                   journal horizon.log
+vita-bridge <ip> key cross             appuie sur un bouton (une frame)
+vita-bridge <ip> run horizon           lance le test Horizon
+vita-bridge <ip> cam x y z yaw pitch   place la caméra de JOUER
+vita-bridge <ip> put local distant     envoie un fichier sous ux0:data/HorizonVita
+```
+
+Le pont n'atteint rien hors de `ux0:data/HorizonVita` et ne touche ni aux plugins ni au
+système. Il empêche la mise en veille pendant qu'il est actif. Désactiver : PONT PC, Croix.

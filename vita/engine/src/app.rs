@@ -1,7 +1,8 @@
 //! The application on the console: menu, mod folders, diagnostics and the 3D test,
 //! as screens of one frame loop.
 
-use crate::{build, gfx, heap, terrain, EXPECTED_NOISE, EXPECTED_WORLD, FIRST_SEED, VERSION};
+use crate::bridge::{self, Request};
+use crate::{build, gfx, heap, horizon_test, terrain, EXPECTED_NOISE, EXPECTED_WORLD, FIRST_SEED, VERSION};
 use glam::{Mat4, Vec3};
 use std::io::Write as _;
 use std::sync::atomic::Ordering::Relaxed;
@@ -12,6 +13,8 @@ const DATA: &str = "ux0:data/HorizonVita";
 /// A real Horizon world region packed on the PC (`vita/world-tools`). Derived from the
 /// user's own Minecraft: it lives on their memory card only.
 const WORLD_PACK: &str = "ux0:data/HorizonVita/world/world.hvw";
+/// Horizon's prepared 26.3 resources, copied from the PC for the on-console Horizon test.
+const RESOURCES: &str = "ux0:data/HorizonVita/resources/26.3";
 /// (label, folder under `DATA`). Nothing here is loaded yet: there is no game engine.
 const FOLDERS: [(&str, &str); 4] = [("Mods", "mods"), ("Packs de ressources", "resourcepacks"), ("Shaders", "shaderpacks"), ("Sauvegardes", "saves")];
 /// Frames averaged for the numbers shown and logged by the 3D test.
@@ -101,6 +104,8 @@ struct Game {
     sums: [f32; 3],
     /// Averages of the last finished window: frame, cpu, gpu milliseconds.
     shown: [f32; 3],
+    /// Draws and triangles of the last frame, and the draws there are in all.
+    last: (usize, usize, usize),
 }
 
 impl Game {
@@ -185,6 +190,7 @@ impl Game {
             frames: 0,
             sums: [0.0; 3],
             shown: [0.0; 3],
+            last: (0, 0, 0),
         })
     }
 
@@ -238,6 +244,7 @@ impl Game {
             Content::Pack(scene) => (renderer.draw_world(scene, wvp, self.cull, self.faces), scene.batch_count(), "vrai monde Horizon généré sur PC, affiché par la Vita (pas encore jouable)"),
             Content::StandIn { scene, .. } => (renderer.draw(scene, wvp, self.cull), scene.chunk_count(), "test de rendu 3D, PAS le jeu"),
         };
+        self.last = (drawn.chunks, drawn.triangles, batches);
         let (user, cdram) = free_memory();
         let [frame_ms, cpu_ms, gpu_ms] = self.shown;
         let fps = if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 };
@@ -321,6 +328,35 @@ fn footer(renderer: &mut gfx::Renderer, hint: &str) {
     renderer.text(48, 514, DIM, 1.0, hint);
 }
 
+/// This console's address on the local network, once the network is up.
+fn local_ip() -> Option<String> {
+    let mut info: SceNetCtlInfo = unsafe { core::mem::zeroed() };
+    if unsafe { sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS as _, &mut info) } < 0 {
+        return None;
+    }
+    let text: String = unsafe { info.ip_address }.iter().take_while(|&&c| c != 0).map(|&c| c as u8 as char).collect();
+    (!text.is_empty()).then_some(text)
+}
+
+/// The button a bridge `key` command names.
+fn button(name: &str) -> Option<u32> {
+    Some(match name {
+        "up" => SCE_CTRL_UP,
+        "down" => SCE_CTRL_DOWN,
+        "left" => SCE_CTRL_LEFT,
+        "right" => SCE_CTRL_RIGHT,
+        "cross" => SCE_CTRL_CROSS,
+        "circle" => SCE_CTRL_CIRCLE,
+        "square" => SCE_CTRL_SQUARE,
+        "triangle" => SCE_CTRL_TRIANGLE,
+        "start" => SCE_CTRL_START,
+        "select" => SCE_CTRL_SELECT,
+        "l" => SCE_CTRL_LTRIGGER,
+        "r" => SCE_CTRL_RTRIGGER,
+        _ => return None,
+    })
+}
+
 pub fn run() {
     let _ = std::fs::create_dir_all(DATA);
     let mut log = Log(std::fs::File::create(format!("{DATA}/horizon.log")).ok(), 0);
@@ -329,6 +365,11 @@ pub fn run() {
         let _ = std::fs::write("ux0:data/HorizonVita/horizon-panic.txt", format!("{info}\n"));
     }));
     log.line(&format!("Horizon Vita {VERSION} - menu, diagnostics, folders and GXM 3D test; no game engine yet"));
+    extern "C" {
+        // newlib (VitaSDK): the heap it reserved at start-up, in bytes.
+        fn _get_vita_heap_size() -> u32;
+    }
+    log.line(&format!("C/Rust heap reserved: {} KiB", unsafe { _get_vita_heap_size() } / 1024));
     let (user, cdram) = free_memory();
     log.line(&format!("free before graphics: user {user} KiB, cdram {cdram} KiB"));
 
@@ -343,7 +384,7 @@ pub fn run() {
     log.line(&format!("free after graphics: user {user} KiB, cdram {cdram} KiB"));
 
     // Checked once: asking the memory card every frame would cost the menu its frame rate.
-    let has_pack = std::fs::metadata(WORLD_PACK).is_ok();
+    let mut has_pack = std::fs::metadata(WORLD_PACK).is_ok();
     let mut screen = Screen::Menu;
     let mut selected = 0usize;
     let mut game: Option<Game> = None;
@@ -353,6 +394,17 @@ pub fn run() {
     let mut noise: Option<(u32, u128)> = None;
     let mut previous = u32::MAX; // ignore buttons already held at launch
     let mut last = Instant::now();
+
+    // The PC bridge stays off until the user turns it on; the choice is kept on the card.
+    let bridge_flag = format!("{DATA}/bridge.on");
+    let mut bridge: Option<bridge::Bridge> = std::fs::metadata(&bridge_flag).is_ok().then(|| bridge::Bridge::start(DATA.to_owned(), VERSION));
+    let mut address: Option<String> = None;
+    let mut injected = 0u32;
+    let mut frame_number = 0u32;
+    let mut quit = false;
+    // The on-console Horizon test, once started, and how many of its lines are logged.
+    let mut horizon: Option<horizon_test::Report> = None;
+    let mut horizon_logged = 0usize;
 
     'frames: loop {
         let started = Instant::now();
@@ -365,18 +417,155 @@ pub fn run() {
             // Neutral sticks, so a failed read cannot move the camera.
             (pad.lx, pad.ly, pad.rx, pad.ry) = (128, 128, 128, 128);
         }
-        let pressed = if have_pad { pad.buttons & !previous } else { 0 };
+        let mut pressed = if have_pad { pad.buttons & !previous } else { 0 };
         if have_pad {
             previous = pad.buttons;
+        }
+        pressed |= core::mem::take(&mut injected);
+
+        frame_number = frame_number.wrapping_add(1);
+        if let Some(active) = bridge.as_ref().filter(|active| active.enabled.load(Relaxed)) {
+            if frame_number % 120 == 1 {
+                // A console left alone for a test must not go to sleep.
+                unsafe { sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT) };
+                if address.is_none() {
+                    address = local_ip();
+                    if let Some(address) = &address {
+                        log.line(&format!("PC bridge: {address}:{}", bridge::PORT));
+                    }
+                }
+            }
+            while let Some(envelope) = active.poll() {
+                let done = || Ok(b"ok".to_vec());
+                let answer = match envelope.request {
+                    Request::Shot => Ok(renderer.capture()),
+                    Request::Quit => {
+                        quit = true;
+                        done()
+                    }
+                    Request::Key(name) => match button(&name) {
+                        Some(mask) => {
+                            injected |= mask;
+                            done()
+                        }
+                        None => Err(format!("unknown button {name:?}")),
+                    },
+                    Request::Reload => {
+                        renderer.finish();
+                        game = None;
+                        game_error = None;
+                        if screen == Screen::Game {
+                            screen = Screen::Menu;
+                        }
+                        has_pack = std::fs::metadata(WORLD_PACK).is_ok();
+                        done()
+                    }
+                    Request::Run(what) => match what.as_str() {
+                        "horizon" if horizon.as_ref().is_some_and(|report| !report.lock().unwrap().last().is_some_and(|last| last == "DONE" || last.starts_with("FAILED"))) => {
+                            Err("the Horizon test is already running".to_owned())
+                        }
+                        "horizon" => match horizon_test::start(RESOURCES.into(), FIRST_SEED, || free_memory().0) {
+                            Ok(report) => {
+                                (horizon, horizon_logged) = (Some(report), 0);
+                                done()
+                            }
+                            Err(error) => Err(error),
+                        },
+                        _ => Err(format!("unknown test {what:?}")),
+                    },
+                    Request::Camera([x, y, z, yaw, pitch]) => match &mut game {
+                        Some(game) => {
+                            (game.position, game.yaw, game.pitch) = (Vec3::new(x, y, z), yaw, pitch.clamp(-1.5, 1.5));
+                            done()
+                        }
+                        None => Err("no scene is loaded: open JOUER first (key cross)".to_owned()),
+                    },
+                    Request::Set(name, value) => match (&mut game, name.as_str()) {
+                        (Some(game), "vsync") => {
+                            game.vsync = value != 0;
+                            if screen == Screen::Game {
+                                renderer.set_vsync(game.vsync);
+                            }
+                            done()
+                        }
+                        (Some(game), "cull") => {
+                            game.cull = value != 0;
+                            done()
+                        }
+                        (Some(game), "gpu") => {
+                            game.time_gpu = value != 0;
+                            done()
+                        }
+                        (Some(game), "faces") if (0..3).contains(&value) => {
+                            game.faces = value as u32;
+                            done()
+                        }
+                        (None, _) => Err("no scene is loaded: open JOUER first (key cross)".to_owned()),
+                        _ => Err(format!("unknown setting {name} = {value}")),
+                    },
+                    Request::State => {
+                        let (user, cdram) = free_memory();
+                        let mut text = format!(
+                            "version {VERSION}\nscreen {}\nselected {selected}\nfree_user_kib {user}\nfree_cdram_kib {cdram}\nheap_kib {}\nheap_peak_kib {}\npack_on_card {has_pack}\n",
+                            match screen {
+                                Screen::Menu => "menu",
+                                Screen::Game => "game",
+                                Screen::Folders => "folders",
+                                Screen::Diagnostic => "diagnostic",
+                            },
+                            heap::LIVE.load(Relaxed) / 1024,
+                            heap::PEAK.load(Relaxed) / 1024
+                        );
+                        if let Some(game) = &game {
+                            let [frame_ms, cpu_ms, gpu_ms] = game.shown;
+                            text.push_str(&format!(
+                                "scene {}\nframe_ms {frame_ms:.2}\ncpu_ms {cpu_ms:.2}\ngpu_ms {gpu_ms:.2}\ndraws {}/{}\ntriangles {}\nvsync {}\ncull {}\nfaces {}\ngpu_timing {}\ncamera {:.2} {:.2} {:.2} {:.3} {:.3}\n",
+                                if matches!(game.content, Content::Pack(_)) { "pack" } else { "stand-in" },
+                                game.last.0,
+                                game.last.2,
+                                game.last.1,
+                                game.vsync as u8,
+                                game.cull as u8,
+                                game.faces,
+                                game.time_gpu as u8,
+                                game.position.x,
+                                game.position.y,
+                                game.position.z,
+                                game.yaw,
+                                game.pitch
+                            ));
+                        }
+                        if let Some(report) = &horizon {
+                            for line in report.lock().unwrap().iter() {
+                                text.push_str("horizon_test ");
+                                text.push_str(line);
+                                text.push('\n');
+                            }
+                        }
+                        Ok(text.into_bytes())
+                    }
+                };
+                let _ = envelope.reply.send(answer);
+            }
+        }
+        if let Some(report) = &horizon {
+            let lines = report.lock().unwrap();
+            for line in &lines[horizon_logged..] {
+                log.line(&format!("horizon test: {line}"));
+            }
+            horizon_logged = lines.len();
+        }
+        if quit {
+            break 'frames;
         }
 
         match screen {
             Screen::Menu => {
                 if pressed & SCE_CTRL_UP != 0 {
-                    selected = (selected + 3) % 4;
+                    selected = (selected + 4) % 5;
                 }
                 if pressed & SCE_CTRL_DOWN != 0 {
-                    selected = (selected + 1) % 4;
+                    selected = (selected + 1) % 5;
                 }
                 if pressed & SCE_CTRL_CROSS != 0 {
                     log.line(&format!("menu item {selected}"));
@@ -409,6 +598,21 @@ pub fn run() {
                             }
                             screen = Screen::Diagnostic;
                         }
+                        3 => {
+                            let on = match &bridge {
+                                Some(active) => {
+                                    let on = !active.enabled.load(Relaxed);
+                                    active.enabled.store(on, Relaxed);
+                                    on
+                                }
+                                None => {
+                                    bridge = Some(bridge::Bridge::start(DATA.to_owned(), VERSION));
+                                    true
+                                }
+                            };
+                            let kept = if on { std::fs::write(&bridge_flag, b"on\n") } else { std::fs::remove_file(&bridge_flag) };
+                            log.line(&format!("PC bridge turned {} (choice kept: {})", if on { "on" } else { "off" }, kept.is_ok()));
+                        }
                         _ => break 'frames,
                     }
                 }
@@ -433,6 +637,13 @@ pub fn run() {
                 if pressed & SCE_CTRL_CIRCLE != 0 {
                     screen = Screen::Menu;
                 }
+                let running = horizon.as_ref().is_some_and(|report| !report.lock().unwrap().last().is_some_and(|last| last == "DONE" || last.starts_with("FAILED")));
+                if pressed & SCE_CTRL_TRIANGLE != 0 && !running {
+                    match horizon_test::start(RESOURCES.into(), FIRST_SEED, || free_memory().0) {
+                        Ok(report) => (horizon, horizon_logged) = (Some(report), 0),
+                        Err(error) => log.line(&format!("horizon test not started: {error}")),
+                    }
+                }
             }
         }
 
@@ -446,22 +657,30 @@ pub fn run() {
             }
             Screen::Menu => {
                 header(&mut renderer, "Pas encore jouable : JOUER affiche un monde Horizon préparé sur PC, ou le test 3D.");
+                let bridge_note = match &bridge {
+                    Some(active) if active.enabled.load(Relaxed) => match &address {
+                        Some(address) => format!("actif : {address}:{}", bridge::PORT),
+                        None => active.status.lock().map(|status| status.clone()).unwrap_or_default(),
+                    },
+                    _ => "désactivé".to_owned(),
+                };
                 let items = [
                     ("JOUER", if has_pack { "monde Horizon (pack du PC)" } else { "test de rendu 3D" }),
                     ("MODS", "dossiers sur la carte"),
                     ("DIAGNOSTIC", "commandes, mémoire, calcul"),
+                    ("PONT PC", bridge_note.as_str()),
                     ("QUITTER", ""),
                 ];
                 for (index, (label, note)) in items.iter().enumerate() {
-                    let y = 196 + index as i32 * 65;
+                    let y = 190 + index as i32 * 56;
                     let on = index == selected;
-                    renderer.rect(48, y, 864, 53, if on { SELECTED } else { PANEL });
-                    renderer.rect(48, y, 6, 53, if on { TEAL } else { rgb(65, 78, 92) });
-                    renderer.text(72, y + 37, TEXT, 1.5, label);
-                    renderer.text(600, y + 34, if index == 0 { WARN } else { DIM }, 1.0, note);
+                    renderer.rect(48, y, 864, 48, if on { SELECTED } else { PANEL });
+                    renderer.rect(48, y, 6, 48, if on { TEAL } else { rgb(65, 78, 92) });
+                    renderer.text(72, y + 34, TEXT, 1.5, label);
+                    renderer.text(560, y + 31, if index == 0 { WARN } else { DIM }, 1.0, note);
                 }
                 match &game_error {
-                    Some(error) => renderer.text(48, 474, BAD, 1.0, &format!("Le test 3D n'a pas démarré : {error}")),
+                    Some(error) => renderer.text(48, 478, BAD, 1.0, &format!("Le test 3D n'a pas démarré : {error}")),
                     None => {}
                 }
                 footer(&mut renderer, "Haut / Bas : choisir     Croix : ouvrir");
@@ -484,7 +703,7 @@ pub fn run() {
             }
             Screen::Diagnostic => {
                 header(&mut renderer, "Diagnostic : commandes, mémoire et calcul Horizon sur cette console.");
-                let mut y = 198;
+                let mut y = 190;
                 let mut row = |renderer: &mut gfx::Renderer, colour: u32, text: String| {
                     renderer.text(48, y, colour, 1.0, &text);
                     y += 25;
@@ -518,13 +737,27 @@ pub fn run() {
                 row(&mut renderer, if log_ok { TEXT } else { BAD }, format!("Journal {DATA}/horizon.log : {}", if log_ok { "ok" } else { "ÉCHEC" }));
                 let font = renderer.has_font();
                 row(&mut renderer, if font { TEXT } else { WARN }, format!("Police système : {}", if font { "chargée" } else { "absente, police de secours" }));
+                // The real Horizon terrain stack on this console: its last lines.
+                match &horizon {
+                    None => row(&mut renderer, DIM, "Triangle : lancer le test Horizon (générateur et mesher d'Horizon sur la console)".into()),
+                    Some(report) => {
+                        let lines = report.lock().unwrap();
+                        let skip = lines.len().saturating_sub(5);
+                        for line in lines.iter().skip(skip) {
+                            let colour = if line.starts_with("FAILED") { BAD } else if line == "DONE" { GOOD } else { TEXT };
+                            let shown: String = line.chars().take(110).collect();
+                            renderer.text(48, y, colour, 0.8, &shown);
+                            y += 20;
+                        }
+                    }
+                }
                 // Front touch reports are 1920x1088; the screen is half that.
                 if let Some((count, reports)) = front {
                     for report in reports.iter().take(count.min(8) as usize) {
                         renderer.rect(report.x as i32 / 2 - 7, report.y as i32 / 2 - 7, 14, 14, TEAL);
                     }
                 }
-                footer(&mut renderer, "Rond : retour");
+                footer(&mut renderer, "Triangle : test Horizon     Rond : retour");
             }
         }
         renderer.end(false);

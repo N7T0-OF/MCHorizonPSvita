@@ -23,6 +23,7 @@ extern "C" {
     fn vita2d_set_clear_color(color: u32);
     fn vita2d_set_vblank_wait(enable: c_int);
     fn vita2d_get_context() -> *mut SceGxmContext;
+    fn vita2d_get_current_fb() -> *mut c_void;
     fn vita2d_load_default_pgf() -> *mut c_void;
     fn vita2d_draw_rectangle(x: f32, y: f32, w: f32, h: f32, color: u32);
     fn vita2d_pgf_draw_text(font: *mut c_void, x: c_int, y: c_int, color: u32, scale: f32, text: *const c_char) -> c_int;
@@ -256,6 +257,22 @@ impl Renderer {
         });
         unsafe { vita2d_swap_buffers() };
         waited
+    }
+
+    /// The picture on screen, as 960x544 rows of RGBA bytes.
+    pub fn capture(&mut self) -> Vec<u8> {
+        const PITCH: usize = 960; // vita2d's DISPLAY_STRIDE_IN_PIXELS
+        let mut pixels = vec![0u8; 960 * 544 * 4];
+        unsafe {
+            vita2d_wait_rendering_done();
+            let shown = vita2d_get_current_fb() as *const u8;
+            if !shown.is_null() {
+                for (row, line) in pixels.chunks_exact_mut(960 * 4).enumerate() {
+                    core::ptr::copy_nonoverlapping(shown.add(row * PITCH * 4), line.as_mut_ptr(), 960 * 4);
+                }
+            }
+        }
+        pixels
     }
 
     /// Waits until the GPU no longer reads any buffer of ours.

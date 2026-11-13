@@ -274,15 +274,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-vita-world-tools"
+name = "horizon-vita-world"
 version = "0.0.1"
 dependencies = [
- "glam",
  "horizon-core",
  "horizon-items",
  "horizon-terrain-data",
  "horizon-terrain-mesh",
  "horizon-world",
+]
+
+[[package]]
+name = "horizon-vita-world-tools"
+version = "0.0.1"
+dependencies = [
+ "glam",
+ "horizon-vita-world",
  "png",
 ]
 
